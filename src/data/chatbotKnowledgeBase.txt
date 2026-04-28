@@ -1,0 +1,101 @@
+# City Intelligence Knowledge Base (Concept Demo)
+
+This file is generated from the app’s `External Datasets/` folder.
+The assistant must answer ONLY using information in this file.
+
+## Phoenix Neighborhood Boundaries (Villages)
+- Source file: Villages.geojson
+- Neighborhoods (15): Ahwatukee Foothills, Alhambra, Camelback East, Central City, Deer Valley, Desert View, Encanto, Estrella, Laveen, Maryvale, North Gateway, North Mountain, Paradise Valley, Rio Vista, South Mountain
+
+## Phoenix Homelessness Services (Monthly)
+- Source file: PhoenixHomelesness.csv
+- Columns observed: FISCAL_YEAR, PERIOD, CATEGORY, TYPE, METRIC, VALUE, PERIOD_FLAG
+- Notes: This dataset represents people served by homelessness-related services (not a direct homelessness count).
+- Top categories in sampled rows:
+  - Street Outreach: 765,818
+  - Emergency Shelter: 423,871
+  - Rapid Rehousing: 14,086
+- Period column present: PERIOD
+- Neighborhood/village column: (not detected in sample parse)
+
+## Phoenix Homelessness Services (Synthetic point locations)
+- Source file: src/data/phoenixHomelessnessSyntheticPoints.json
+- Total points: 180
+- Notes: Points are synthetic (generated for map visualization) and are scattered within Phoenix neighborhood boundaries.
+- Sample properties (first 5):
+  - service: (unknown); neighborhood: Rio Vista
+  - service: (unknown); neighborhood: Laveen
+  - service: (unknown); neighborhood: Estrella
+  - service: (unknown); neighborhood: Desert View
+  - service: (unknown); neighborhood: Desert View
+
+## Phoenix Calls for Service (2026 sample)
+- Source file: calls-for-service_2026-calls-for-service_callsforsrvc2026.csv
+- Columns observed: INCIDENT_NUM, DISP_CODE, DISPOSITION, FINAL_RADIO_CODE, FINAL_CALL_TYPE, CALL_RECEIVED, HUNDREDBLOCKADDR, GRID"
+- Sampled rows: 19,999
+- Date range (from sampled rows): 2026-01-01 to 2026-01-12 (sampled)
+- Call type column: FINAL_CALL_TYPE
+
+### Common call types (frequency in sampled rows)
+- VEHICLE STOP: 1,746
+- TRESPASSING: 1,685
+- SUSPICIOUS PERSON: 1,387
+- CHECK WELFARE: 1,317
+- FIGHT: 1,053
+- BURGLARY ALARM: 820
+- ACCIDENT NO INJURIES: 820
+- DOMESTIC VIOLENCE: 669
+- LOUD NOISE DISTURBANCE: 497
+- THEFT: 455
+- SUBJECT STOP: 446
+- ASSAULT: 421
+- CRIMINAL DAMAGE: 376
+- SUSPICIOUS PERSON IN VEHICLE: 373
+- CIVIL MATTER/STANDBY: 359
+- ABANDONED VEHICLE: 319
+- BURGLARY RESIDENTIAL: 277
+- ILLEGAL PARKING: 257
+- HIT & RUN ACCIDENT NO INJURY: 244
+- MENTALLY ILL SUBJECT TRANSPORT: 215
+- GENERIC: 213
+- STOLEN VEHICLE: 197
+- THREAT: 189
+- CIVIL MATTER - ORDER OF PROTECTION TO BE SERVED: 188
+- ACCIDENT WITH INJURIES: 167
+- SHOPLIFTING: 163
+- MISSING PERSON: 155
+- BURGLARY COMMERCIAL: 151
+- SHOTS FIRED: 148
+- AGGRAVATED ASSAULT: 146
+- UNKNOWN TROUBLE: 144
+- HARASSMENT: 143
+- JUDICIAL INTERFERENCE: 137
+- PR CONTACT: 136
+- TRAFFIC HAZARD: 135
+- BURGLARY FROM VEHICLE: 117
+- NEIGHBOR DISPUTE: 106
+- INTENSIVE PATROL: 105
+- ASSIST MOTORIST: 104
+- INJURED/SICK PERSON: 102
+
+### Important note for interpretation
+- Counts above are from a sample of the dataset for concept/demo grounding. They are not guaranteed to match the full-year total unless computed over the full file.
+
+## Phoenix Heat Deaths (Example data)
+- Source file: src/data/phoenixHeatDeathsByVillage.json
+- Notes: These are hardcoded example values used for visualization (not an official dataset).
+- Central City: 22
+- Maryvale: 19
+- South Mountain: 16
+- Alhambra: 14
+- North Mountain: 12
+- Encanto: 11
+- Camelback East: 9
+- Estrella: 8
+- Rio Vista: 7
+- Deer Valley: 6
+- Laveen: 5
+- Desert View: 4
+- Paradise Valley: 3
+- Ahwatukee Foothills: 2
+- North Gateway: 1

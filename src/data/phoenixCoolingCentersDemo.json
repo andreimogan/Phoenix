@@ -1,0 +1,23 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Phoenix Convention Center",
+        "status": "Open",
+        "address": "100 N 3rd St, Phoenix, AZ"
+      },
+      "geometry": { "type": "Point", "coordinates": [-112.0712, 33.4484] }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Hance Park",
+        "status": "Open",
+        "address": "67 W Culver St, Phoenix, AZ"
+      },
+      "geometry": { "type": "Point", "coordinates": [-112.0758, 33.4669] }
+    }
+  ]
+}

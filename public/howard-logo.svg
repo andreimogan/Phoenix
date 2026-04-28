@@ -1,0 +1,16 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Outer circle -->
+  <circle cx="32" cy="32" r="30" fill="#1a1d22" stroke="#ffffff" stroke-width="2"/>
+  
+  <!-- Inner decorative circle -->
+  <circle cx="32" cy="32" r="24" fill="none" stroke="#ffffff" stroke-width="1" opacity="0.3"/>
+  
+  <!-- Letter H -->
+  <path d="M24 18 V38 M24 28 H40 M40 18 V38" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  
+  <!-- Small decorative diamonds -->
+  <rect x="16.5" y="15.5" width="3" height="3" transform="rotate(45 18 17)" fill="#ffffff" opacity="0.8"/>
+  <rect x="44.5" y="15.5" width="3" height="3" transform="rotate(45 46 17)" fill="#ffffff" opacity="0.8"/>
+  <rect x="16.5" y="43.5" width="3" height="3" transform="rotate(45 18 45)" fill="#ffffff" opacity="0.8"/>
+  <rect x="44.5" y="43.5" width="3" height="3" transform="rotate(45 46 45)" fill="#ffffff" opacity="0.8"/>
+</svg>

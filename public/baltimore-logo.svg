@@ -1,0 +1,16 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Outer circle -->
+  <circle cx="32" cy="32" r="30" fill="#1a1d22" stroke="#ffffff" stroke-width="2"/>
+  
+  <!-- Inner decorative circle -->
+  <circle cx="32" cy="32" r="24" fill="none" stroke="#ffffff" stroke-width="1" opacity="0.3"/>
+  
+  <!-- Letter B -->
+  <path d="M23 18 H30 Q36 18 36 23 Q36 26 33 27 Q37 28 37 32 Q37 38 30 38 H23 Z M27 22 V26 H30 Q32 26 32 24 Q32 22 30 22 Z M27 30 V34 H30 Q33 34 33 32 Q33 30 30 30 Z" fill="#ffffff"/>
+  
+  <!-- Small stars for decoration -->
+  <circle cx="18" cy="16" r="1.5" fill="#ffffff" opacity="0.8"/>
+  <circle cx="46" cy="16" r="1.5" fill="#ffffff" opacity="0.8"/>
+  <circle cx="18" cy="48" r="1.5" fill="#ffffff" opacity="0.8"/>
+  <circle cx="46" cy="48" r="1.5" fill="#ffffff" opacity="0.8"/>
+</svg>

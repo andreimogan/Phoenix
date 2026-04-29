@@ -16,7 +16,7 @@ import cfsGeocodes from '../data/callsForServiceGeocodes.json'
 import phoenixHomelessnessSeedUrl from '../../External Datasets/PhoenixHomelesness.csv?url'
 import { getPhoenixHomelessnessSnapshot, parsePhoenixHomelessnessCsv } from '../utils/phoenixHomelessness'
 import phoenixVillagesUrl from '../../External Datasets/Villages.geojson?url'
-import phoenixCouncilDistrictsUrl from '../../External Datasets/Phoenix_Council_district.geojson?url'
+import phoenixCouncilDistrictsUrl from '../../External Datasets/Phoenix_Council_District.geojson?url'
 import phoenixHeatDeathsByVillage from '../data/phoenixHeatDeathsByVillage.json'
 import phoenixHeatIllnessesSyntheticDemo from '../data/phoenixHeatIllnessesSyntheticDemo.json'
 

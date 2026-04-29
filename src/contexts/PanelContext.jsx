@@ -139,18 +139,8 @@ export const PanelProvider = ({ children }) => {
   // City selection ('stl' | 'baltimore' | 'howard' | 'phoenix')
   const [selectedCity, setSelectedCity] = useState('phoenix')
 
-  // Map engine selection ('maplibre' | 'mapbox')
-  const [mapEngine, setMapEngine] = useState('maplibre')
-
-  // Map engine-specific color schemes for 311 layers
+  // Map rendering (MapLibre-only)
   const [mapLibreColors, setMapLibreColors] = useState({
-    pointColor: '#f97316',           // Orange for individual points
-    clusterSmall: '#f97316',         // Orange for clusters <50
-    clusterMedium: '#ef4444',        // Red for clusters 50-200
-    clusterLarge: '#b91c1c',         // Dark red for clusters >200
-  })
-  
-  const [mapboxColors, setMapboxColors] = useState({
     pointColor: '#f97316',           // Orange for individual points
     clusterSmall: '#f97316',         // Orange for clusters <50
     clusterMedium: '#ef4444',        // Red for clusters 50-200
@@ -980,10 +970,6 @@ export const PanelProvider = ({ children }) => {
     selectedCity,
     setSelectedCity,
 
-    // Map engine
-    mapEngine,
-    setMapEngine,
-
     // Date & Year
     selectedDate,
     setSelectedDate,
@@ -1048,11 +1034,8 @@ export const PanelProvider = ({ children }) => {
     baltimore311DataYear,
     setBaltimore311DataYear,
     
-    // Map engine colors
     mapLibreColors,
     setMapLibreColors,
-    mapboxColors,
-    setMapboxColors,
     
     // Health data
     healthOverdoseVisible,

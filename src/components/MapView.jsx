@@ -214,8 +214,6 @@ const countPointsInVillages = (points, precomputed) => {
 }
 
 const MAPTILER_API_KEY = 'X1kjwlVN29N1UZItdixx'
-const MAPBOX_TOKEN = 'pk.eyJ1IjoiYW5kcmVpbW9nYW4iLCJhIjoiY21uNDdoanI4MTgxcjJycGR4a2xxc3RyNSJ9.atvOuDPanicP6gd21D9ExQ'
-const MAPBOX_STYLE = 'mapbox://styles/andreimogan/cmn47nl5v004t01r4db5b1npe?fresh=true'
 
 function createZoomPercentControl({ minZoom = 8, maxZoom = 18, maxPercent = 200 } = {}) {
   let map = null
@@ -337,9 +335,7 @@ const get311ServiceUrl = (year, endDate = null) => {
 export default function MapView() {
   const { 
     selectedCity,
-    mapEngine,
     mapLibreColors,
-    mapboxColors,
     neighborhoodsRiskVisible, 
     baltimoreNeighborhoodsData,
     setBaltimoreNeighborhoodsData,
@@ -401,7 +397,7 @@ export default function MapView() {
   const neighborhoodMarkers = useRef([]) // Store { pin: Marker, card: Marker, name: string }
   const [mapLoaded, setMapLoaded] = useState(false)
   const [minimizedCards, setMinimizedCards] = useState({}) // Track which cards are minimized by neighborhood name
-  const [currentEngine, setCurrentEngine] = useState(null) // Track which engine is currently loaded
+  const [currentEngine, setCurrentEngine] = useState('maplibre') // Track which engine is currently loaded
   // Cache fetched 311 GeoJSON per year+date combination to avoid redundant requests
   // Key format: "YYYY-MM-DD" for specific dates, or "YYYY" for year-end
   const baltimore311Cache = useRef({})
@@ -506,25 +502,17 @@ export default function MapView() {
     phoenix: { center: [-112.0740, 33.4484], zoom: 10.5 },
   }
 
-  // Get active color scheme based on current engine
-  const getActiveColors = () => {
-    return mapEngine === 'mapbox' ? mapboxColors : mapLibreColors
-  }
+  // Get active color scheme (MapLibre-only)
+  const getActiveColors = () => mapLibreColors
 
-  // Get map style URL based on engine
-  const getMapStyle = (engine) => {
-    if (engine === 'mapbox') {
-      return MAPBOX_STYLE
-    }
-    return `https://api.maptiler.com/maps/streets-v2-dark/style.json?key=${MAPTILER_API_KEY}`
-  }
+  // Get map style URL (MapLibre-only)
+  const getMapStyle = () => `https://api.maptiler.com/maps/streets-v2-dark/style.json?key=${MAPTILER_API_KEY}`
 
-  // Initialize/reinitialize map when engine changes
+  // Initialize map (MapLibre-only)
   useEffect(() => {
     const initMap = async () => {
-      // Save current map state if switching engines
       let savedState = null
-      if (map.current && currentEngine !== mapEngine) {
+      if (map.current) {
         savedState = {
           center: map.current.getCenter(),
           zoom: map.current.getZoom(),
@@ -534,25 +522,16 @@ export default function MapView() {
         setMapLoaded(false)
       }
 
-      // Skip if map already exists with correct engine
-      if (map.current && currentEngine === mapEngine) return
+      // Skip if map already exists
+      if (map.current) return
 
-      // Get view preset for this city and engine
-      const preset = getViewPreset(selectedCity, mapEngine)
+      // Get view preset for this city (MapLibre)
+      const preset = getViewPreset(selectedCity, 'maplibre')
       const cfg = cityConfig[selectedCity] || cityConfig.stl
       
-      console.log('🎯 Map init - getting preset:', { selectedCity, mapEngine, preset, cfg })
+      console.log('🎯 Map init - getting preset:', { selectedCity, preset, cfg })
 
-      // Dynamic import based on engine
-      let mapgl
-      if (mapEngine === 'mapbox') {
-        const mapboxModule = await import('mapbox-gl')
-        await import('mapbox-gl/dist/mapbox-gl.css')
-        mapgl = mapboxModule.default
-        mapgl.accessToken = MAPBOX_TOKEN
-      } else {
-        mapgl = maplibregl
-      }
+      const mapgl = maplibregl
 
       // Store library reference for popup creation
       mapLib.current = mapgl
@@ -566,11 +545,11 @@ export default function MapView() {
       const pitch = preset?.pitch ?? 0
       const bearing = preset?.bearing ?? 0
 
-      console.log('🗺️ Initializing map:', { selectedCity, mapEngine, usingPreset: !!preset, center, zoom, pitch, bearing })
+      console.log('🗺️ Initializing map:', { selectedCity, usingPreset: !!preset, center, zoom, pitch, bearing })
 
       map.current = new mapgl.Map({
         container: mapContainer.current,
-        style: getMapStyle(mapEngine),
+        style: getMapStyle(),
         center,
         zoom,
         pitch,
@@ -2326,7 +2305,7 @@ export default function MapView() {
       }, 100)
 
       setMapLoaded(true)
-      setCurrentEngine(mapEngine) // Track current engine
+      setCurrentEngine('maplibre') // Track current engine
     })
   }
 
@@ -2338,15 +2317,15 @@ export default function MapView() {
       map.current = null
     }
   }
-}, [mapEngine]) // Re-run when engine changes (not city - city changes are handled by camera preset effect)
+}, [selectedCity]) // Re-run when city changes
 
-  // Apply view preset when city or engine changes (after map is loaded)
+  // Apply view preset when city changes (after map is loaded)
   useEffect(() => {
-    console.log('📸 Camera preset effect triggered:', { selectedCity, mapEngine, mapLoaded })
+    console.log('📸 Camera preset effect triggered:', { selectedCity, mapLoaded })
     
     if (!map.current || !mapLoaded) return
     
-    const preset = getViewPreset(selectedCity, mapEngine)
+    const preset = getViewPreset(selectedCity, 'maplibre')
     console.log('🎬 Applying camera preset:', preset)
     if (!preset) return
 
@@ -2359,7 +2338,7 @@ export default function MapView() {
       duration: 1500, // 1.5 second animation
       essential: true
     })
-  }, [selectedCity, mapEngine, mapLoaded])
+  }, [selectedCity, mapLoaded])
 
   // Future-date emphasis: dim/desaturate *basemap only* for any future selected date.
   // We avoid CSS filters (which affect overlays) and instead lower opacity on
@@ -2521,7 +2500,7 @@ export default function MapView() {
     if (map.current.getLayer('baltimore-311-heatmap-points')) {
       map.current.setPaintProperty('baltimore-311-heatmap-points', 'circle-color', colors.pointColor)
     }
-  }, [mapLibreColors, mapboxColors, mapEngine, mapLoaded]) // Re-run when colors change
+  }, [mapLibreColors, mapLoaded]) // Re-run when colors change
 
   // Neighborhood risk layer visibility (St. Louis only)
   useEffect(() => {

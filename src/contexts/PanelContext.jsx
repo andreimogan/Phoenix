@@ -41,6 +41,7 @@ export const PanelProvider = ({ children }) => {
   const [phoenixInterventionWindowVisible, setPhoenixInterventionWindowVisible] = useState(false)
   const [phoenixBriefingRoomVisible, setPhoenixBriefingRoomVisible] = useState(true)
   const [kpiCardsVisible, setKpiCardsVisible] = useState(false)
+  const [heatReliefKpiCardsVisible, setHeatReliefKpiCardsVisible] = useState(true)
 
   // Right-side windows order (based on enable sequence)
   // Allowed ids: 'weather' | 'latest311' | 'intervention' | 'briefingRoom'
@@ -225,6 +226,8 @@ export const PanelProvider = ({ children }) => {
   const [phoenixHeatIllnessesGranularity, setPhoenixHeatIllnessesGranularity] = useState('week') // 'week' | 'month'
   // Heat illnesses geometry: show choropleth over council districts or villages.
   const [phoenixHeatIllnessesGeoView, setPhoenixHeatIllnessesGeoView] = useState('districts') // 'districts' | 'villages'
+  // Cooling centers overlay geometry: show district/village density choropleths, or none (points only).
+  const [phoenixCoolingCentersGeoView, setPhoenixCoolingCentersGeoView] = useState('districts') // 'none' | 'districts' | 'villages'
   // Choropleth name labels on the map (district or village polygons for heat illnesses).
   const [phoenixHeatIllnessGeoLabelsVisible, setPhoenixHeatIllnessGeoLabelsVisible] = useState(true)
 
@@ -954,6 +957,8 @@ export const PanelProvider = ({ children }) => {
     setPhoenixBriefingRoomVisible,
     kpiCardsVisible,
     setKpiCardsVisible,
+    heatReliefKpiCardsVisible,
+    setHeatReliefKpiCardsVisible,
     rightWindowsOrder,
     toggleRightWindow,
     rightWindowsCollapsed,
@@ -1085,6 +1090,8 @@ export const PanelProvider = ({ children }) => {
     setPhoenixHeatIllnessesGranularity,
     phoenixHeatIllnessesGeoView,
     setPhoenixHeatIllnessesGeoView,
+    phoenixCoolingCentersGeoView,
+    setPhoenixCoolingCentersGeoView,
     phoenixHeatIllnessGeoLabelsVisible,
     setPhoenixHeatIllnessGeoLabelsVisible,
 

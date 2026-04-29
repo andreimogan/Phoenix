@@ -1,5 +1,6 @@
 import { usePanelContext } from '../contexts/PanelContext'
 import CityKPICards from './CityKPICards'
+import HeatReliefKPICards from './HeatReliefKPICards'
 import WeatherInfoWindow from './windows/WeatherInfoWindow'
 import Latest311Window from './windows/Latest311Window'
 import ImmediateInterventionWindow from './windows/ImmediateInterventionWindow'
@@ -9,6 +10,7 @@ export default function OverlayColumns() {
   const {
     currentView,
     kpiCardsVisible,
+    heatReliefKpiCardsVisible,
     phoenixWeatherWindowVisible,
     phoenixLatest311WindowVisible,
     phoenixInterventionWindowVisible,
@@ -24,7 +26,7 @@ export default function OverlayColumns() {
     !!phoenixInterventionWindowVisible ||
     !!phoenixBriefingRoomVisible
 
-  const anyLeft = !!kpiCardsVisible
+  const anyLeft = !!kpiCardsVisible || !!heatReliefKpiCardsVisible
 
   if (!anyLeft && !anyRight) return null
 
@@ -51,7 +53,12 @@ export default function OverlayColumns() {
             pointerEvents: 'auto',
           }}
         >
-          {kpiCardsVisible ? <CityKPICards /> : null}
+          {anyLeft ? (
+            <div className="z-50 flex flex-col gap-3 overflow-y-auto pr-1" style={{ height: '100%' }}>
+              {kpiCardsVisible ? <CityKPICards embedded /> : null}
+              {heatReliefKpiCardsVisible ? <HeatReliefKPICards embedded /> : null}
+            </div>
+          ) : null}
         </div>
 
         {/* Right overlay wrap */}

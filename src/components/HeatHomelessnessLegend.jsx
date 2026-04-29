@@ -70,7 +70,7 @@ function Section({ title, children, description }) {
 }
 
 /** Label column · ramp column — “No Data” solid; “Low / High” horizontal gradient line */
-function RagTwoRowLegend({ noDataColor, gradientCss }) {
+function RagTwoRowLegend({ noDataColor, gradientCss, rampLabel = 'Low / High' }) {
   return (
     <div
       className="w-full gap-y-2.5 gap-x-3 text-left"
@@ -92,7 +92,7 @@ function RagTwoRowLegend({ noDataColor, gradientCss }) {
         aria-hidden
       />
       <span className="text-[11px]" style={{ color: 'var(--color-gray-300)' }}>
-        Low / High
+        {rampLabel}
       </span>
       <div
         className="h-2 w-full rounded-sm"
@@ -115,6 +115,8 @@ export default function HeatHomelessnessLegend() {
     phoenixHomelessnessVisible,
     phoenixHomelessnessAffectedNeighborhoodsVisible,
     phoenixHomelessnessCategoryEnabled,
+    phoenixCoolingCentersVisible,
+    phoenixCoolingCentersGeoView,
     callsForServiceStyle,
   } = usePanelContext()
 
@@ -122,10 +124,11 @@ export default function HeatHomelessnessLegend() {
 
   const showHeatIllness = phoenixHeatIllnessesVisible
   const showHeatDeaths = phoenixHeatDeathsVisible
+  const showCoolingCenters = phoenixCoolingCentersVisible
   const showHomelessPoints = phoenixHomelessnessVisible
   const showHomelessNeighborRag = phoenixHomelessnessAffectedNeighborhoodsVisible
 
-  if (!showHeatIllness && !showHeatDeaths && !showHomelessPoints && !showHomelessNeighborRag) {
+  if (!showHeatIllness && !showHeatDeaths && !showCoolingCenters && !showHomelessPoints && !showHomelessNeighborRag) {
     return null
   }
 
@@ -159,12 +162,45 @@ export default function HeatHomelessnessLegend() {
 
       <div className="px-3 py-3 space-y-0">
         {showHeatIllness ? (
-          <div
-            className="border-t first:border-t-0 first:pt-0 pt-3 mt-3 first:mt-0"
-            style={{ borderColor: 'var(--color-gray-700)' }}
+          <Section title="Heat Illnesses">
+            <RagTwoRowLegend
+              noDataColor={HEAT_ILLNESS.noData}
+              gradientCss={heatIllnessCssGradient()}
+              rampLabel="Density"
+            />
+          </Section>
+        ) : null}
+
+        {showCoolingCenters ? (
+          <Section
+            title="Cooling Centers"
           >
-            <RagTwoRowLegend noDataColor={HEAT_ILLNESS.noData} gradientCss={heatIllnessCssGradient()} />
-          </div>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2.5">
+                <span
+                  className="shrink-0 rounded-full"
+                  style={{
+                    width: 10,
+                    height: 10,
+                    backgroundColor: 'rgba(46, 185, 194, 0.95)',
+                    boxShadow: '0 0 0 1px rgba(255,255,255,0.2)',
+                  }}
+                  aria-hidden
+                />
+                <span className="text-[11px]" style={{ color: 'var(--color-gray-200)' }}>
+                  Cooling center location
+                </span>
+              </div>
+
+              {phoenixCoolingCentersGeoView !== 'none' ? (
+                <RagTwoRowLegend
+                  noDataColor={'rgba(82,82,91,0.35)'}
+                  gradientCss={'linear-gradient(to right, rgba(239,68,68,0.45), rgba(245,158,11,0.45), rgba(234,179,8,0.45), rgba(34,197,94,0.45))'}
+                  rampLabel="Density (high is better)"
+                />
+              ) : null}
+            </div>
+          </Section>
         ) : null}
 
         {showHeatDeaths ? (

@@ -24,6 +24,8 @@ export default function NavRight() {
     setPhoenixBriefingRoomVisible,
     kpiCardsVisible,
     setKpiCardsVisible,
+    heatReliefKpiCardsVisible,
+    setHeatReliefKpiCardsVisible,
     toggleRightWindow,
   } = usePanelContext()
 
@@ -99,6 +101,11 @@ export default function NavRight() {
                   label: 'KPI Cards',
                   checked: !!kpiCardsVisible,
                   onToggle: () => setKpiCardsVisible((v) => !v),
+                },
+                {
+                  label: 'Heat Relief KPI Cards',
+                  checked: !!heatReliefKpiCardsVisible,
+                  onToggle: () => setHeatReliefKpiCardsVisible((v) => !v),
                 },
                 {
                   label: 'Latest 311 Service Requests',

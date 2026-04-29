@@ -124,6 +124,7 @@ export default function WeatherInfoWindow() {
         latitude: String(coords.latitude),
         longitude: String(coords.longitude),
         hourly: HOURLY_FIELDS.join(','),
+        temperature_unit: 'fahrenheit',
       })
 
       try {
@@ -237,7 +238,7 @@ export default function WeatherInfoWindow() {
                       {derived.cityLabel}
                     </p>
                     <p className="text-sm font-semibold" style={{ color: 'var(--color-gray-100)' }}>
-                      Current: {derived.currentTemp}C
+                      Current: {derived.currentTemp}°F
                     </p>
                   </div>
                   <div
@@ -262,7 +263,7 @@ export default function WeatherInfoWindow() {
                       <CloudSun className="w-4 h-4" style={{ color: '#f2b84b' }} />
                     </div>
                     <p className="text-sm font-semibold" style={{ color: 'var(--color-gray-100)' }}>
-                      {derived.today.minTemp} - {derived.today.maxTemp}C
+                      {derived.today.minTemp} - {derived.today.maxTemp}°F
                     </p>
                     <p className="text-[10px] mt-0.5" style={{ color: 'var(--color-gray-400)' }}>
                       Cloud {derived.today.avgCloud}%
@@ -277,7 +278,7 @@ export default function WeatherInfoWindow() {
                       <CloudMoon className="w-4 h-4" style={{ color: '#91a0b8' }} />
                     </div>
                     <p className="text-sm font-semibold" style={{ color: 'var(--color-gray-100)' }}>
-                      {derived.tonight.minTemp} - {derived.tonight.maxTemp}C
+                      {derived.tonight.minTemp} - {derived.tonight.maxTemp}°F
                     </p>
                     <p className="text-[10px] mt-0.5" style={{ color: 'var(--color-gray-400)' }}>
                       Cloud {derived.tonight.avgCloud}%

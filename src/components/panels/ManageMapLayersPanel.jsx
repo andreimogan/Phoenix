@@ -189,6 +189,8 @@ export default function ManageMapLayersPanel() {
     setPhoenixHeatIllnessesGranularity,
     phoenixHeatIllnessesGeoView,
     setPhoenixHeatIllnessesGeoView,
+    phoenixCoolingCentersGeoView,
+    setPhoenixCoolingCentersGeoView,
     phoenixHeatIllnessGeoLabelsVisible,
     setPhoenixHeatIllnessGeoLabelsVisible,
   } = usePanelContext()
@@ -444,10 +446,25 @@ export default function ManageMapLayersPanel() {
     if (keep !== 'temperature') setPhoenixTemperatureNeighborhoodsVisible(false)
   }
 
+  const enforcePhoenixHeatHomelessnessPrimaryExclusivity = (keep) => {
+    // Only one of: Heat | Cooling Centers | Homelessness Services
+    if (keep !== 'heat') {
+      setPhoenixHeatIllnessesVisible(false)
+      setPhoenixHeatDeathsVisible(false)
+      setPhoenixTemperatureNeighborhoodsVisible(false)
+    }
+    if (keep !== 'cooling') setPhoenixCoolingCentersVisible(false)
+    if (keep !== 'homeless') {
+      setPhoenixHomelessnessVisible(false)
+      setPhoenixHomelessnessAffectedNeighborhoodsVisible(false)
+    }
+  }
+
   const togglePhoenixHeatIllnessesLayer = () => {
     setPhoenixHeatIllnessesVisible((prev) => {
       const next = !prev
       if (next) {
+        enforcePhoenixHeatHomelessnessPrimaryExclusivity('heat')
         enforcePhoenixHeatSubLayerExclusivity('illnesses')
         activateHeatMasterIfNeeded()
       }
@@ -456,6 +473,8 @@ export default function ManageMapLayersPanel() {
   }
 
   const togglePhoenixHeatDeathsLayer = () => {
+    // Disabled (out of scope for now)
+    return;
     setPhoenixHeatDeathsVisible((prev) => {
       const next = !prev
       if (next) {
@@ -469,7 +488,10 @@ export default function ManageMapLayersPanel() {
   const togglePhoenixCoolingCentersLayer = () => {
     setPhoenixCoolingCentersVisible((prev) => {
       const next = !prev
-      if (next) activateHeatMasterIfNeeded()
+      if (next) {
+        activateHeatMasterIfNeeded()
+        enforcePhoenixHeatHomelessnessPrimaryExclusivity('cooling')
+      }
       return next
     })
   }
@@ -478,6 +500,7 @@ export default function ManageMapLayersPanel() {
     setPhoenixTemperatureNeighborhoodsVisible((prev) => {
       const next = !prev
       if (next) {
+        enforcePhoenixHeatHomelessnessPrimaryExclusivity('heat')
         enforcePhoenixHeatSubLayerExclusivity('temperature')
         activateHeatMasterIfNeeded()
       }
@@ -500,6 +523,7 @@ export default function ManageMapLayersPanel() {
   const togglePhoenixHeatMaster = () => {
     const state = getPhoenixHeatMasterState()
     if (state === 'off') {
+      enforcePhoenixHeatHomelessnessPrimaryExclusivity('heat')
       setPhoenixHeatIllnessesVisible(true)
       activateHeatMasterIfNeeded()
       return
@@ -1887,43 +1911,37 @@ export default function ManageMapLayersPanel() {
                               </div>
 
                               {/* Heat Deaths sub-accordion */}
-                              <div className="rounded-md border" style={subAccordionHeaderStyle(heatDeathsOn)}>
+                              <div className="rounded-md border" style={subAccordionHeaderStyle(false)}>
                                 <div className="flex items-center justify-between gap-2 px-2 py-2">
                                   <div
-                                    className="flex items-center gap-1.5 flex-1 min-w-0 cursor-pointer"
-                                    onClick={() => setExpandedPhoenixHeatDeaths((v) => !v)}
+                                    className="flex items-center gap-1.5 flex-1 min-w-0"
                                   >
                                     <div className="w-3 h-3 flex items-center justify-center shrink-0" style={{ color: 'var(--color-gray-400)' }}>
-                                      {expandedPhoenixHeatDeaths ? <ChevronDown className="w-2.5 h-2.5" /> : <ChevronRight className="w-2.5 h-2.5" />}
+                                      <ChevronRight className="w-2.5 h-2.5" />
                                     </div>
                                     <div className="text-[12px] font-medium truncate" style={{ color: 'var(--color-gray-200)' }}>
                                       Heat Deaths
                                     </div>
                                   </div>
-                                  {renderHeatSubLayerToggle(heatDeathsOn, togglePhoenixHeatDeathsLayer, 'Toggle Heat Deaths')}
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: 'rgba(255,255,255,0.35)' }}>
+                                      Disabled
+                                    </span>
+                                    <span
+                                      className="inline-flex h-4 w-7 rounded-full p-[2px] border"
+                                      style={{
+                                        borderColor: 'rgba(255,255,255,0.10)',
+                                        background: 'rgba(255,255,255,0.06)',
+                                        opacity: 0.55,
+                                      }}
+                                      aria-hidden
+                                    >
+                                      <span className="h-3 w-3 rounded-full bg-white" style={{ opacity: 0.75 }} />
+                                    </span>
+                                  </div>
                                 </div>
 
-                                {expandedPhoenixHeatDeaths && (
-                                  <div className="px-2 pb-2 space-y-2">
-                                    <div className="space-y-1">
-                                      <div className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--color-gray-500)' }}>
-                                        Map options
-                                      </div>
-                                      <label className="flex items-center justify-between gap-2 rounded-md border px-2 py-2 text-[11px]"
-                                        style={{ borderColor: 'var(--color-gray-700)', background: 'rgba(255,255,255,0.02)', color: 'var(--color-gray-200)' }}
-                                      >
-                                        <span className="min-w-0 truncate">Show labels</span>
-                                        <input
-                                          type="checkbox"
-                                          checked={heatDeathsLabelsOn}
-                                          onChange={() => setPhoenixHeatDeathsLabelsVisible((v) => !v)}
-                                          className="h-3.5 w-3.5 accent-yellow-500"
-                                        />
-                                      </label>
-                                      {renderShowDistrictOverlay()}
-                                    </div>
-                                  </div>
-                                )}
+                                {/* Disabled (out of scope) */}
                               </div>
 
                               {/* Temperature sub-accordion */}
@@ -1987,9 +2005,6 @@ export default function ManageMapLayersPanel() {
                                 <div className="text-[12px] font-medium leading-tight truncate" style={{ color: 'var(--color-gray-200)' }}>
                                   Cooling Centers
                                 </div>
-                                <div className="text-[10px] mt-0.5" style={{ color: 'var(--color-gray-500)' }}>
-                                  Points (clustered)
-                                </div>
                               </div>
                             </div>
                             {renderHeatSubLayerToggle(!!phoenixCoolingCentersVisible, togglePhoenixCoolingCentersLayer, 'Toggle Cooling Centers')}
@@ -2003,7 +2018,38 @@ export default function ManageMapLayersPanel() {
                                 <div className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--color-gray-500)' }}>
                                   Map options
                                 </div>
-                                {renderShowNeighborhoodOverlay()}
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    className="text-[11px] px-2 py-1 rounded-md border"
+                                    style={segmentedBtnStyle(phoenixCoolingCentersGeoView === 'none')}
+                                    onClick={() => {
+                                      setPhoenixCoolingCentersGeoView('none')
+                                    }}
+                                  >
+                                    None
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="text-[11px] px-2 py-1 rounded-md border"
+                                    style={segmentedBtnStyle(phoenixCoolingCentersGeoView === 'districts')}
+                                    onClick={() => {
+                                      setPhoenixCoolingCentersGeoView('districts')
+                                    }}
+                                  >
+                                    Districts
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="text-[11px] px-2 py-1 rounded-md border"
+                                    style={segmentedBtnStyle(phoenixCoolingCentersGeoView === 'villages')}
+                                    onClick={() => {
+                                      setPhoenixCoolingCentersGeoView('villages')
+                                    }}
+                                  >
+                                    Villages
+                                  </button>
+                                </div>
                               </div>
                             </div>
                           )}
@@ -2046,7 +2092,14 @@ export default function ManageMapLayersPanel() {
                                 aria-label="Toggle Phoenix homelessness services layer"
                                 className="relative inline-flex h-4 w-8 shrink-0 cursor-pointer items-center rounded-full transition-colors"
                                 style={{ backgroundColor: homelessnessVisible ? '#eab308' : 'var(--color-gray-400)' }}
-                                onClick={() => setPhoenixHomelessnessVisible((v) => !v)}
+                                onClick={() => setPhoenixHomelessnessVisible((prev) => {
+                                  const next = !prev
+                                  if (next) {
+                                    enforcePhoenixHeatHomelessnessPrimaryExclusivity('homeless')
+                                    activateHeatMasterIfNeeded()
+                                  }
+                                  return next
+                                })}
                               >
                                 <span
                                   className="pointer-events-none absolute left-0.5 top-0.5 h-3 w-3 rounded-full bg-white shadow transition-transform"

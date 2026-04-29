@@ -47,13 +47,13 @@ export const VIEW_PRESETS = {
   phoenix: {
     maplibre: {
       center: [-112.0740, 33.4484],
-      zoom: 10.5,
+      zoom: 9.5,
       pitch: 0,
       bearing: 0
     },
     mapbox: {
       center: [-112.0740, 33.4484],
-      zoom: 10.5,
+      zoom: 9.5,
       pitch: 0,
       bearing: 0
     }

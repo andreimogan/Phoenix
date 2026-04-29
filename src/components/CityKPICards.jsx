@@ -62,7 +62,7 @@ const CustomTooltip = ({ active, payload }) => {
   )
 }
 
-export default function CityKPICards() {
+export default function CityKPICards({ embedded = false }) {
   const [activeCard, setActiveCard] = useState(null)
   const [isPerformanceModalOpen, setIsPerformanceModalOpen] = useState(false)
   const [trend14DayData, setTrend14DayData] = useState([])
@@ -268,7 +268,7 @@ export default function CityKPICards() {
     <>
       <div
         className="z-50 flex flex-col gap-3 overflow-hidden"
-        style={{ width: '300px', maxHeight: '100%' }}
+        style={embedded ? { width: '100%' } : { width: '300px', maxHeight: '100%' }}
       >
         {processedCards.map((card) => {
           const isActive = activeCard === card.id

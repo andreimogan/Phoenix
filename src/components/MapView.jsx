@@ -21,7 +21,7 @@ import phoenixHomelessnessSyntheticPoints from '../data/phoenixHomelessnessSynth
 import phoenixHeatDeathsByVillage from '../data/phoenixHeatDeathsByVillage.json'
 import phoenixHeatDeathsDailyMultipliers from '../data/phoenixHeatDeathsDailyMultipliers.json'
 import phoenixHeatIllnessesSyntheticDemo from '../data/phoenixHeatIllnessesSyntheticDemo.json'
-import phoenixCoolingCentersDemo from '../data/phoenixCoolingCentersDemo.json'
+import { buildPhoenixCoolingCentersGeojson, getPhoenixCoolingCentersHistoricalCoverage } from '../utils/phoenixCoolingCentersGeojson'
 import {
   addMonths,
   fetchArchiveHourlyTemps,
@@ -408,6 +408,7 @@ export default function MapView() {
     phoenixHeatIllnessesTimeMode,
     phoenixHeatIllnessesGranularity,
     phoenixHeatIllnessesGeoView,
+    phoenixCoolingCentersGeoView,
     phoenixHeatIllnessGeoLabelsVisible,
     callsForServiceVisible,
     callsForServiceStyle,
@@ -477,6 +478,7 @@ export default function MapView() {
   const phoenixHeatDeathsRailRef = useRef(null)
   const phoenixHeatDeathsDateInputRef = useRef(null)
   const [viewportWidth, setViewportWidth] = useState(() => (typeof window !== 'undefined' ? window.innerWidth : 1200))
+  const [phoenixCoolingCentersCoverage, setPhoenixCoolingCentersCoverage] = useState(null)
 
   useEffect(() => {
     const onResize = () => setViewportWidth(window.innerWidth)
@@ -541,7 +543,7 @@ export default function MapView() {
     stl: { center: [-90.1994, 38.6270], zoom: 11 },
     baltimore: { center: [-76.6122, 39.2904], zoom: 11 },
     howard: { center: [-76.8758, 39.2037], zoom: 11 }, // Howard County, MD
-    phoenix: { center: [-112.0740, 33.4484], zoom: 10.5 },
+    phoenix: { center: [-112.0740, 33.4484], zoom: 9.5 },
   }
 
   // Get active color scheme (MapLibre-only)
@@ -775,13 +777,25 @@ export default function MapView() {
         promoteId: 'OBJECTID',
       })
 
+      // Phoenix villages colored by Cooling Centers density (derived; point-in-polygon)
+      map.current.addSource('phoenix-villages-cooling-centers-rag', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+        promoteId: 'NAME',
+      })
+
+      // Phoenix council districts colored by Cooling Centers density (derived; point-in-polygon)
+      map.current.addSource('phoenix-council-districts-cooling-centers-rag', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+        promoteId: 'OBJECTID',
+      })
+
       // Phoenix cooling centers (points)
       map.current.addSource('phoenix-cooling-centers', {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] },
-        cluster: true,
-        clusterRadius: 40,
-        clusterMaxZoom: 12,
+        // Always show individual centers (no clustering).
       })
 
       map.current.addLayer({
@@ -1118,6 +1132,117 @@ export default function MapView() {
         },
         layout: { visibility: 'none' },
       }, firstSymbolId)
+
+      map.current.addLayer({
+        id: 'phoenix-villages-cooling-centers-rag-fill',
+        type: 'fill',
+        source: 'phoenix-villages-cooling-centers-rag',
+        paint: {
+          'fill-color': [
+            'case',
+            ['<=', ['to-number', ['coalesce', ['get', 'ccCount'], 0]], 0],
+            'rgba(82,82,91,0.35)', // no centers
+            [
+              'interpolate',
+              ['linear'],
+              ['to-number', ['coalesce', ['get', 'ccScore'], 0]],
+              0, 'rgba(239,68,68,0.45)',    // red (low density)
+              0.5, 'rgba(245,158,11,0.45)',  // amber
+              0.8, 'rgba(234,179,8,0.45)',   // yellow
+              1, 'rgba(34,197,94,0.45)',     // green (high density)
+            ],
+          ],
+          'fill-outline-color': [
+            'case',
+            ['boolean', ['feature-state', 'hover'], false],
+            'rgba(255,255,255,0.75)',
+            'rgba(255,255,255,0.25)',
+          ],
+        },
+        layout: { visibility: 'none' },
+      }, firstSymbolId)
+
+      map.current.addLayer({
+        id: 'phoenix-villages-cooling-centers-rag-border',
+        type: 'line',
+        source: 'phoenix-villages-cooling-centers-rag',
+        paint: {
+          'line-color': [
+            'case',
+            ['boolean', ['feature-state', 'hover'], false],
+            'rgba(255,255,255,0.85)',
+            'rgba(255,255,255,0.30)',
+          ],
+          'line-width': [
+            'case',
+            ['boolean', ['feature-state', 'hover'], false],
+            2.75,
+            1.5,
+          ],
+          'line-opacity': 0.9,
+        },
+        layout: { visibility: 'none' },
+      }, firstSymbolId)
+
+      map.current.addLayer({
+        id: 'phoenix-council-districts-cooling-centers-rag-fill',
+        type: 'fill',
+        source: 'phoenix-council-districts-cooling-centers-rag',
+        paint: {
+          'fill-color': [
+            'case',
+            ['<=', ['to-number', ['coalesce', ['get', 'ccCount'], 0]], 0],
+            'rgba(82,82,91,0.35)', // no centers
+            [
+              'interpolate',
+              ['linear'],
+              ['to-number', ['coalesce', ['get', 'ccScore'], 0]],
+              0, 'rgba(239,68,68,0.45)',    // red (low density)
+              0.5, 'rgba(245,158,11,0.45)',  // amber
+              0.8, 'rgba(234,179,8,0.45)',   // yellow
+              1, 'rgba(34,197,94,0.45)',     // green (high density)
+            ],
+          ],
+          'fill-outline-color': [
+            'case',
+            ['boolean', ['feature-state', 'hover'], false],
+            'rgba(255,255,255,0.75)',
+            'rgba(255,255,255,0.25)',
+          ],
+        },
+        layout: { visibility: 'none' },
+      }, firstSymbolId)
+
+      map.current.addLayer({
+        id: 'phoenix-council-districts-cooling-centers-rag-border',
+        type: 'line',
+        source: 'phoenix-council-districts-cooling-centers-rag',
+        paint: {
+          'line-color': [
+            'case',
+            ['boolean', ['feature-state', 'hover'], false],
+            'rgba(255,255,255,0.85)',
+            'rgba(255,255,255,0.30)',
+          ],
+          'line-width': [
+            'case',
+            ['boolean', ['feature-state', 'hover'], false],
+            2.75,
+            1.5,
+          ],
+          'line-opacity': 0.9,
+        },
+        layout: { visibility: 'none' },
+      }, firstSymbolId)
+
+      // Ensure cooling center points draw above choropleths.
+      try {
+        if (map.current.getLayer('phoenix-cooling-centers-clusters')) map.current.moveLayer('phoenix-cooling-centers-clusters', firstSymbolId)
+        if (map.current.getLayer('phoenix-cooling-centers-cluster-count')) map.current.moveLayer('phoenix-cooling-centers-cluster-count', firstSymbolId)
+        if (map.current.getLayer('phoenix-cooling-centers-points')) map.current.moveLayer('phoenix-cooling-centers-points', firstSymbolId)
+      } catch {
+        // ignore move failures (layer may not exist yet in some init paths)
+      }
 
       map.current.addLayer({
         id: 'phoenix-council-districts-temperature-labels',
@@ -1537,12 +1662,12 @@ export default function MapView() {
           ],
           'circle-radius': [
             'interpolate', ['linear'], ['zoom'],
-            9, 2,
-            12, 4,
-            15, 7,
+            9, 4,
+            12, 8,
+            15, 11,
           ],
-          'circle-opacity': 0.55,
-          'circle-stroke-width': 1,
+          'circle-opacity': 1,
+          'circle-stroke-width': 1.25,
           'circle-stroke-color': 'rgba(255,255,255,0.22)',
         },
         layout: { visibility: 'none' },
@@ -1563,7 +1688,7 @@ export default function MapView() {
             'step', ['get', 'point_count'],
             18, 50, 26, 200, 34,
           ],
-          'circle-opacity': 0.85,
+          'circle-opacity': 1,
           'circle-stroke-width': 2,
           'circle-stroke-color': 'rgba(255,255,255,0.25)',
         },
@@ -1599,12 +1724,12 @@ export default function MapView() {
           ],
           'circle-radius': [
             'interpolate', ['linear'], ['zoom'],
-            9, 2,
-            12, 4,
-            15, 7,
+            9, 4,
+            12, 8,
+            15, 11,
           ],
-          'circle-opacity': 0.6,
-          'circle-stroke-width': 1,
+          'circle-opacity': 1,
+          'circle-stroke-width': 1.25,
           'circle-stroke-color': 'rgba(255,255,255,0.22)',
         },
         layout: { visibility: 'none' },
@@ -1661,15 +1786,11 @@ export default function MapView() {
           ],
           'circle-radius': [
             'interpolate', ['linear'], ['zoom'],
-            14, 2,
-            16, 4,
+            14, 8,
+            16, 11,
           ],
-          'circle-opacity': [
-            'interpolate', ['linear'], ['zoom'],
-            14, 0,
-            15, 0.8,
-          ],
-          'circle-stroke-width': 1,
+          'circle-opacity': 1,
+          'circle-stroke-width': 1.25,
           'circle-stroke-color': 'rgba(255,255,255,0.25)',
         },
         layout: { visibility: 'none' },
@@ -3509,23 +3630,130 @@ export default function MapView() {
   useEffect(() => {
     if (!map.current || !mapLoaded) return
     if (!map.current.getSource('phoenix-cooling-centers')) return
+    if (!map.current.getSource('phoenix-villages-cooling-centers-rag')) return
+    if (!map.current.getSource('phoenix-council-districts-cooling-centers-rag')) return
 
     const shouldShow = selectedCity === 'phoenix' && phoenixCoolingCentersVisible
     const setVis = (id, vis) => {
       if (map.current.getLayer(id)) map.current.setLayoutProperty(id, 'visibility', vis)
     }
 
-    setVis('phoenix-cooling-centers-clusters', shouldShow ? 'visible' : 'none')
-    setVis('phoenix-cooling-centers-cluster-count', shouldShow ? 'visible' : 'none')
+    // No clustering for cooling centers.
+    setVis('phoenix-cooling-centers-clusters', 'none')
+    setVis('phoenix-cooling-centers-cluster-count', 'none')
     setVis('phoenix-cooling-centers-points', shouldShow ? 'visible' : 'none')
+
+    const showDistrictRag = shouldShow && phoenixCoolingCentersGeoView === 'districts'
+    const showVillageRag = shouldShow && phoenixCoolingCentersGeoView === 'villages'
+    setVis('phoenix-council-districts-cooling-centers-rag-fill', showDistrictRag ? 'visible' : 'none')
+    setVis('phoenix-council-districts-cooling-centers-rag-border', showDistrictRag ? 'visible' : 'none')
+    setVis('phoenix-villages-cooling-centers-rag-fill', showVillageRag ? 'visible' : 'none')
+    setVis('phoenix-villages-cooling-centers-rag-border', showVillageRag ? 'visible' : 'none')
 
     if (!shouldShow) {
       map.current.getSource('phoenix-cooling-centers').setData({ type: 'FeatureCollection', features: [] })
+      map.current.getSource('phoenix-villages-cooling-centers-rag').setData({ type: 'FeatureCollection', features: [] })
+      map.current.getSource('phoenix-council-districts-cooling-centers-rag').setData({ type: 'FeatureCollection', features: [] })
       return
     }
 
-    map.current.getSource('phoenix-cooling-centers').setData(phoenixCoolingCentersDemo)
-  }, [selectedCity, phoenixCoolingCentersVisible, mapLoaded])
+    let cancelled = false
+    ;(async () => {
+      try {
+        const geojson = await buildPhoenixCoolingCentersGeojson()
+        if (cancelled) return
+        map.current.getSource('phoenix-cooling-centers').setData(geojson)
+
+        const points = geojson?.features || []
+
+        // Villages choropleth
+        const baseVillages = phoenixVillagesGeojson || phoenixVillagesCache.current
+        if (baseVillages?.features?.length) {
+          const pre = buildPhoenixVillageCfsPrecomputed(baseVillages)
+          const { counts } = countPointsInVillages(points, pre)
+          const max = Math.max(0, ...Array.from(counts.values()))
+          const derived = {
+            type: 'FeatureCollection',
+            features: (baseVillages.features || []).map((f) => {
+              const name = String(f?.properties?.NAME ?? '').trim()
+              const c = name ? (counts.get(name) || 0) : 0
+              const score = max > 0 ? c / max : 0
+              return {
+                ...f,
+                properties: {
+                  ...(f.properties || {}),
+                  ccCount: c,
+                  ccScore: Number.isFinite(score) ? score : 0,
+                },
+              }
+            }),
+          }
+          map.current.getSource('phoenix-villages-cooling-centers-rag').setData(derived)
+        } else {
+          map.current.getSource('phoenix-villages-cooling-centers-rag').setData({ type: 'FeatureCollection', features: [] })
+        }
+
+        // Districts choropleth
+        const baseDistricts = phoenixCouncilDistrictsGeojson || phoenixCouncilDistrictsCache.current
+        if (baseDistricts?.features?.length) {
+          const pre = buildPhoenixCouncilDistrictCfsPrecomputed(baseDistricts)
+          const { counts } = countPointsInVillages(points, pre)
+          const max = Math.max(0, ...Array.from(counts.values()))
+          const derived = {
+            type: 'FeatureCollection',
+            features: (baseDistricts.features || []).map((f) => {
+              const objectIdRaw = f?.properties?.OBJECTID ?? f?.id
+              const objectId = objectIdRaw == null ? '' : String(objectIdRaw)
+              const c = objectId ? (counts.get(objectId) || 0) : 0
+              const score = max > 0 ? c / max : 0
+              return {
+                ...f,
+                properties: {
+                  ...(f.properties || {}),
+                  ccCount: c,
+                  ccScore: Number.isFinite(score) ? score : 0,
+                },
+              }
+            }),
+          }
+          map.current.getSource('phoenix-council-districts-cooling-centers-rag').setData(derived)
+        } else {
+          map.current.getSource('phoenix-council-districts-cooling-centers-rag').setData({ type: 'FeatureCollection', features: [] })
+        }
+      } catch {
+        if (cancelled) return
+        map.current.getSource('phoenix-cooling-centers').setData({ type: 'FeatureCollection', features: [] })
+        map.current.getSource('phoenix-villages-cooling-centers-rag').setData({ type: 'FeatureCollection', features: [] })
+        map.current.getSource('phoenix-council-districts-cooling-centers-rag').setData({ type: 'FeatureCollection', features: [] })
+      }
+    })()
+
+    return () => { cancelled = true }
+  }, [
+    selectedCity,
+    phoenixCoolingCentersVisible,
+    phoenixCoolingCentersGeoView,
+    phoenixVillagesGeojson,
+    phoenixCouncilDistrictsGeojson,
+    mapLoaded,
+  ])
+
+  useEffect(() => {
+    let cancelled = false
+    if (selectedCity !== 'phoenix' || !phoenixCoolingCentersVisible) {
+      setPhoenixCoolingCentersCoverage(null)
+      return
+    }
+    ;(async () => {
+      try {
+        const cov = await getPhoenixCoolingCentersHistoricalCoverage()
+        if (!cancelled) setPhoenixCoolingCentersCoverage(cov)
+      } catch {
+        if (!cancelled) setPhoenixCoolingCentersCoverage(null)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [selectedCity, phoenixCoolingCentersVisible])
 
   // Phoenix council districts colored by temperature (citywide hourly value projected to districts)
   useEffect(() => {
@@ -4994,6 +5222,7 @@ export default function MapView() {
 
         const isPhoenixCalls = selectedCity === 'phoenix' && phoenixActiveMasterLayer === 'calls'
         const isPhoenixTemperature = selectedCity === 'phoenix' && !!phoenixTemperatureNeighborhoodsVisible
+        const isPhoenixCoolingCenters = selectedCity === 'phoenix' && !!phoenixCoolingCentersVisible
         const isAggHistorical =
           selectedCity === 'phoenix' &&
           !!phoenixHeatIllnessesVisible &&
@@ -5023,7 +5252,9 @@ export default function MapView() {
 
         const label = isPhoenixCalls
           ? 'Historical Data'
-          : isAggHistorical
+          : isPhoenixCoolingCenters
+            ? 'Historical'
+            : isAggHistorical
             ? 'Historical'
             : (cmp > 0 ? 'Forecast' : cmp < 0 ? 'Historical' : 'Today')
         const periodTag = (() => {
@@ -5058,6 +5289,9 @@ export default function MapView() {
             if (label === 'Forecast') return 'Open‑Meteo forecast (16 days)'
             // Historical: show the selected day
             return selectedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+          }
+          if (isPhoenixCoolingCenters) {
+            return phoenixCoolingCentersCoverage
           }
           if (isAggHistorical) return historicalCoverage
           if (label === 'Today') {

@@ -5,6 +5,9 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import { getNeighborhoodRiskData } from '../data/neighborhoodRiskData'
 import { usePanelContext } from '../contexts/PanelContext'
 import HeatmapLegend from './HeatmapLegend'
+import CallsForServiceLegend from './CallsForServiceLegend'
+import HeatHomelessnessLegend from './HeatHomelessnessLegend'
+import TemperatureLegend from './TemperatureLegend'
 import overdoseData from '../data/baltimoreOverdoseData'
 import naloxoneData from '../data/baltimoreNaloxoneData'
 import { calculateNeighborhood311Density, getNeighborhoodColorExpression, getNeighborhoodBorderExpression } from '../utils/neighborhoodDensity'
@@ -21,15 +24,11 @@ import phoenixHeatIllnessesSyntheticDemo from '../data/phoenixHeatIllnessesSynth
 import phoenixCoolingCentersDemo from '../data/phoenixCoolingCentersDemo.json'
 import {
   addMonths,
-  buildMonthKeysAround,
-  buildSeasonalApproxFromLastYear,
   fetchArchiveHourlyTemps,
   fetchForecastHourlyTemps,
   mergeHourlySeries,
-  monthKeyFromDate,
-  monthStartEndYmd,
 } from '../utils/openMeteoHourlyTemps'
-import { getPhoenixTempsCache, isForecastStale, setPhoenixTempsCache } from '../utils/phoenixTempsCache'
+import { getPhoenixDistrictTempsCache, isForecastStale, setPhoenixDistrictTempsCache } from '../utils/phoenixDistrictTempsCache'
 
 function getGeojsonFeatureCenter(feature) {
   // Cheap center: bbox midpoint of all coordinates
@@ -51,6 +50,55 @@ function getGeojsonFeatureCenter(feature) {
   }
   if (![minX, minY, maxX, maxY].every(Number.isFinite)) return null
   return [(minX + maxX) / 2, (minY + maxY) / 2]
+}
+
+function getPolygonCentroidLngLat(feature) {
+  // Best-effort centroid for Polygon/MultiPolygon in lon/lat.
+  // Uses outer ring of the largest polygon by bbox area.
+  const geom = feature?.geometry
+  if (!geom) return null
+
+  const ringCentroid = (ring) => {
+    // ring: [[x,y],...], can be closed; compute planar centroid in lon/lat.
+    if (!Array.isArray(ring) || ring.length < 3) return null
+    let area2 = 0
+    let cx = 0
+    let cy = 0
+    for (let i = 0; i < ring.length; i++) {
+      const p0 = ring[i]
+      const p1 = ring[(i + 1) % ring.length]
+      const x0 = Number(p0?.[0]); const y0 = Number(p0?.[1])
+      const x1 = Number(p1?.[0]); const y1 = Number(p1?.[1])
+      if (!Number.isFinite(x0) || !Number.isFinite(y0) || !Number.isFinite(x1) || !Number.isFinite(y1)) continue
+      const a = x0 * y1 - x1 * y0
+      area2 += a
+      cx += (x0 + x1) * a
+      cy += (y0 + y1) * a
+    }
+    if (!Number.isFinite(area2) || area2 === 0) return null
+    const area6 = area2 * 3
+    return [cx / area6, cy / area6]
+  }
+
+  const pickRing = () => {
+    if (geom.type === 'Polygon') {
+      return geom.coordinates?.[0] || null
+    }
+    if (geom.type === 'MultiPolygon') {
+      const polys = Array.isArray(geom.coordinates) ? geom.coordinates : []
+      // choose the first ring of the first polygon with coords
+      for (const poly of polys) {
+        const ring = poly?.[0]
+        if (Array.isArray(ring) && ring.length >= 3) return ring
+      }
+    }
+    return null
+  }
+
+  const ring = pickRing()
+  const c = ring ? ringCentroid(ring) : null
+  if (c && Number.isFinite(c[0]) && Number.isFinite(c[1])) return c
+  return getGeojsonFeatureCenter(feature)
 }
 
 const pointInRing = (lng, lat, ring) => {
@@ -360,6 +408,7 @@ export default function MapView() {
     phoenixHeatIllnessesTimeMode,
     phoenixHeatIllnessesGranularity,
     phoenixHeatIllnessesGeoView,
+    phoenixHeatIllnessGeoLabelsVisible,
     callsForServiceVisible,
     callsForServiceStyle,
     callsForServiceTypes,
@@ -416,21 +465,14 @@ export default function MapView() {
   const phoenixCouncilDistrictsCfsRagHoverId = useRef(null)
   const phoenixCouncilDistrictsCfsPrepared = useRef(null) // { key, prepared }
   const phoenixVillageToCouncilDistrictRef = useRef(null) // { key, map: Map(villageName -> districtLabel) }
-  const phoenixVillageTempsCache = useRef(new Map()) // key: `${yyyy-mm-dd}|${NAME}` -> { tempAvgC, atMs }
   const phoenixVillageHourlyTempsCache = useRef(new Map()) // name -> { times: string[], tempsC: number[] }
-  const phoenixTempLabelMarkersRef = useRef([]) // Array<maplibre Marker>
   const phoenixHeatDeathsLabelMarkersRef = useRef([]) // Array<maplibre Marker>
   const phoenixHomelessnessSnapshotRef = useRef(null)
   const phoenixHomelessnessCategoryEnabledRef = useRef({})
   const phoenixTemperatureNeighborhoodsLabelsVisibleRef = useRef(false)
   const phoenixHeatDeathsLabelsVisibleRef = useRef(false)
 
-  const [phoenixTempTimeline, setPhoenixTempTimeline] = useState({ status: 'idle', times: [], idx: 0 })
   const [phoenixHeatDeathsTimeline, setPhoenixHeatDeathsTimeline] = useState({ status: 'idle', months: [], idx: 6 })
-  const [phoenixTimelineUi, setPhoenixTimelineUi] = useState({ dayKey: null, minHour: 0, maxHour: 23, stepMinutes: 60 })
-  const phoenixTimelineDragRef = useRef({ dragging: false })
-  const phoenixTimelineRailRef = useRef(null)
-  const phoenixTimelineDateInputRef = useRef(null)
   const phoenixHeatDeathsDragRef = useRef({ dragging: false })
   const phoenixHeatDeathsRailRef = useRef(null)
   const phoenixHeatDeathsDateInputRef = useRef(null)
@@ -705,11 +747,11 @@ export default function MapView() {
         promoteId: 'NAME',
       })
 
-      // Phoenix villages colored by temperature (derived)
-      map.current.addSource('phoenix-villages-temperature', {
+      // Phoenix council districts colored by temperature (derived; citywide value projected to districts)
+      map.current.addSource('phoenix-council-districts-temperature', {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] },
-        promoteId: 'NAME',
+        promoteId: 'OBJECTID',
       })
 
       // Phoenix villages colored by heat deaths (example metric; derived)
@@ -902,24 +944,35 @@ export default function MapView() {
       }, firstSymbolId)
 
       map.current.addLayer({
-        id: 'phoenix-villages-temperature-fill',
+        id: 'phoenix-council-districts-temperature-fill',
         type: 'fill',
-        source: 'phoenix-villages-temperature',
+        source: 'phoenix-council-districts-temperature',
         paint: {
           'fill-color': [
             'case',
-            ['!', ['has', 'tempAvgC']], 'rgba(156, 163, 175, 0.16)',
-            ['==', ['get', 'tempAvgC'], null], 'rgba(156, 163, 175, 0.16)',
+            ['!', ['has', 'tempF']], 'rgba(156, 163, 175, 0.80)',
+            ['==', ['get', 'tempF'], null], 'rgba(156, 163, 175, 0.80)',
             [
               'interpolate',
               ['linear'],
-              ['to-number', ['get', 'tempAvgC']],
-              // °C scale
-              15, 'rgba(59, 130, 246, 0.25)',  // cool blue
-              22, 'rgba(34, 211, 238, 0.28)',  // cyan
-              28, 'rgba(250, 204, 21, 0.28)',  // yellow
-              34, 'rgba(245, 158, 11, 0.34)',  // amber
-              40, 'rgba(239, 68, 68, 0.40)',   // red
+              ['to-number', ['get', 'tempF']],
+              // °F scale (standard legend)
+              -40, 'rgba(242, 242, 242, 0.80)',
+              -30, 'rgba(242, 154, 194, 0.80)',
+              -20, 'rgba(217, 76, 154, 0.80)',
+              -10, 'rgba(166, 51, 166, 0.80)',
+              0, 'rgba(106, 58, 166, 0.80)',
+              10, 'rgba(61, 58, 166, 0.80)',
+              20, 'rgba(43, 115, 210, 0.80)',
+              30, 'rgba(31, 191, 154, 0.80)',
+              40, 'rgba(63, 191, 74, 0.80)',
+              50, 'rgba(183, 225, 58, 0.80)',
+              60, 'rgba(242, 230, 70, 0.80)',
+              70, 'rgba(242, 178, 31, 0.80)',
+              80, 'rgba(242, 106, 42, 0.80)',
+              90, 'rgba(227, 58, 42, 0.80)',
+              100, 'rgba(198, 27, 31, 0.80)',
+              120, 'rgba(91, 15, 20, 0.80)',
             ],
           ],
           'fill-opacity': 0.85,
@@ -928,9 +981,9 @@ export default function MapView() {
       }, firstSymbolId)
 
       map.current.addLayer({
-        id: 'phoenix-villages-temperature-border',
+        id: 'phoenix-council-districts-temperature-border',
         type: 'line',
-        source: 'phoenix-villages-temperature',
+        source: 'phoenix-council-districts-temperature',
         paint: {
           'line-color': 'rgba(255,255,255,0.25)',
           'line-width': 1.5,
@@ -1067,20 +1120,25 @@ export default function MapView() {
       }, firstSymbolId)
 
       map.current.addLayer({
-        id: 'phoenix-villages-temperature-labels',
+        id: 'phoenix-council-districts-temperature-labels',
         type: 'symbol',
-        source: 'phoenix-villages-temperature',
+        source: 'phoenix-council-districts-temperature',
         layout: {
           'text-field': [
             'case',
-            ['any', ['!', ['has', 'tempF']], ['==', ['get', 'tempF'], null]],
+            ['any', ['!', ['has', 'tempF']], ['==', ['get', 'tempF'], null], ['!', ['has', 'DISTRICT']]],
             '',
-            ['concat', 'Temp ', ['to-string', ['get', 'tempF']], '°F'],
+            ['concat', 'District ', ['to-string', ['get', 'DISTRICT']], ' · ', ['to-string', ['get', 'tempF']], '°F'],
           ],
           'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
-          'text-size': 11,
-          'text-allow-overlap': false,
-          'text-ignore-placement': false,
+          'text-size': 15,
+          // Let MapLibre try alternate placements before dropping labels due to collisions.
+          'text-variable-anchor': ['center', 'top', 'bottom', 'left', 'right', 'top-left', 'top-right', 'bottom-left', 'bottom-right'],
+          'text-radial-offset': 0.6,
+          'text-padding': 1,
+          // Only 8 labels: always show (avoid “missing District 8” due to collisions).
+          'text-allow-overlap': true,
+          'text-ignore-placement': true,
           'visibility': 'none',
         },
         paint: {
@@ -1224,6 +1282,27 @@ export default function MapView() {
       })
 
       map.current.addLayer({
+        id: 'phoenix-council-districts-heatillness-labels',
+        type: 'symbol',
+        source: 'phoenix-council-districts-heatillness',
+        layout: {
+          visibility: 'none',
+          'text-field': ['concat', 'District ', ['to-string', ['get', 'DISTRICT']]],
+          'text-size': 15,
+          'text-font': ['Open Sans Bold'],
+          'text-variable-anchor': ['center', 'top', 'bottom', 'left', 'right', 'top-left', 'top-right', 'bottom-left', 'bottom-right'],
+          'text-radial-offset': 0.6,
+          'text-padding': 1,
+          'text-allow-overlap': false,
+        },
+        paint: {
+          'text-color': 'rgba(255,255,255,0.88)',
+          'text-halo-color': 'rgba(0,0,0,0.55)',
+          'text-halo-width': 1.2,
+        },
+      })
+
+      map.current.addLayer({
         id: 'phoenix-villages-heatillness-fill',
         type: 'fill',
         source: 'phoenix-villages-heatillness',
@@ -1274,6 +1353,29 @@ export default function MapView() {
           'line-opacity': 0.9,
         },
         layout: { visibility: 'none' },
+      })
+
+      map.current.addLayer({
+        id: 'phoenix-villages-heatillness-labels',
+        type: 'symbol',
+        source: 'phoenix-villages-heatillness',
+        layout: {
+          visibility: 'none',
+          'text-field': ['coalesce', ['get', 'NAME'], ''],
+          'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
+          'text-size': 15,
+          'text-max-width': 10,
+          'text-variable-anchor': ['center', 'top', 'bottom', 'left', 'right', 'top-left', 'top-right', 'bottom-left', 'bottom-right'],
+          'text-radial-offset': 0.6,
+          'text-padding': 1,
+          'text-allow-overlap': false,
+        },
+        paint: {
+          'text-color': '#ffffff',
+          'text-halo-color': 'rgba(0,0,0,0.85)',
+          'text-halo-width': 2.5,
+          'text-opacity': 0.95,
+        },
       })
 
       map.current.addSource('phoenix-cfs-flat', {
@@ -1822,7 +1924,7 @@ export default function MapView() {
         'phoenix-homelessness-unclustered',
         'phoenix-homelessness-heatmap-points',
         'phoenix-villages-homelessness-fill',
-        'phoenix-villages-temperature-fill',
+        'phoenix-council-districts-temperature-fill',
         'phoenix-villages-heatdeaths-fill',
         'phoenix-villages-cfs-rag-fill',
       ].forEach((id) => {
@@ -1830,23 +1932,23 @@ export default function MapView() {
         map.current.on('mouseleave', id, () => { map.current.getCanvas().style.cursor = '' })
       })
 
-      // Phoenix temperature neighborhoods: hover tooltip (when labels are off)
-      let hoveredTempVillageId = null
-      let temperatureVillagePopup = null
+      // Phoenix temperature districts: hover tooltip (when labels are off)
+      let hoveredTempDistrictId = null
+      let temperatureDistrictPopup = null
 
       const clearTempPopup = () => {
-        try { temperatureVillagePopup?.remove?.() } catch {}
-        temperatureVillagePopup = null
+        try { temperatureDistrictPopup?.remove?.() } catch {}
+        temperatureDistrictPopup = null
       }
 
-      map.current.on('mousemove', 'phoenix-villages-temperature-fill', (e) => {
+      map.current.on('mousemove', 'phoenix-council-districts-temperature-fill', (e) => {
         if (phoenixTemperatureNeighborhoodsLabelsVisibleRef.current) return
         const f = e.features?.[0]
-        const id = f?.properties?.NAME
+        const id = f?.properties?.DISTRICT
         if (!id) return
 
         // Keep a lightweight hovered id (no feature-state styling needed)
-        hoveredTempVillageId = id
+        hoveredTempDistrictId = id
 
         clearTempPopup()
         const tempC = Number(f?.properties?.tempAvgC)
@@ -1854,7 +1956,7 @@ export default function MapView() {
         const tempLabel = Number.isFinite(tempF) ? `${Math.round(tempF)}°F` : '—'
         const center = [e.lngLat.lng, e.lngLat.lat]
 
-        temperatureVillagePopup = new mapLib.current.Popup({
+        temperatureDistrictPopup = new mapLib.current.Popup({
           closeButton: false,
           closeOnClick: false,
           maxWidth: '140px',
@@ -1864,14 +1966,14 @@ export default function MapView() {
           .setLngLat(center)
           .setHTML(`
             <div style="font-size:12px;font-weight:600;line-height:1.1;color:rgba(255,255,255,0.92)">
-              Temp ${tempLabel}
+              District ${String(id)} · Temp ${tempLabel}
             </div>
           `)
           .addTo(map.current)
       })
 
-      map.current.on('mouseleave', 'phoenix-villages-temperature-fill', () => {
-        hoveredTempVillageId = null
+      map.current.on('mouseleave', 'phoenix-council-districts-temperature-fill', () => {
+        hoveredTempDistrictId = null
         clearTempPopup()
       })
 
@@ -2372,7 +2474,7 @@ export default function MapView() {
       'phoenix-council-districts-heatillness',
       'phoenix-villages-heatillness',
       'phoenix-villages-homelessness',
-      'phoenix-villages-temperature',
+      'phoenix-council-districts-temperature',
       'phoenix-villages-heatdeaths',
       'phoenix-villages-cfs-rag',
       'phoenix-council-districts-cfs-rag',
@@ -2668,6 +2770,9 @@ export default function MapView() {
     setVis('phoenix-council-districts-heatillness-border', shouldShow && geoView === 'districts' ? 'visible' : 'none')
     setVis('phoenix-villages-heatillness-fill', shouldShow && geoView === 'villages' ? 'visible' : 'none')
     setVis('phoenix-villages-heatillness-border', shouldShow && geoView === 'villages' ? 'visible' : 'none')
+    const labelsWant = !!(shouldShow && phoenixHeatIllnessGeoLabelsVisible)
+    setVis('phoenix-council-districts-heatillness-labels', labelsWant && geoView === 'districts' ? 'visible' : 'none')
+    setVis('phoenix-villages-heatillness-labels', labelsWant && geoView === 'villages' ? 'visible' : 'none')
 
     if (!shouldShow) {
       map.current.getSource('phoenix-council-districts-heatillness').setData({ type: 'FeatureCollection', features: [] })
@@ -2854,6 +2959,7 @@ export default function MapView() {
     selectedCity,
     phoenixHeatIllnessesVisible,
     phoenixHeatIllnessesGeoView,
+    phoenixHeatIllnessGeoLabelsVisible,
     phoenixHeatIllnessesTimeMode,
     phoenixHeatIllnessesGranularity,
     phoenixHeatIllnessesEnabled,
@@ -3421,188 +3527,136 @@ export default function MapView() {
     map.current.getSource('phoenix-cooling-centers').setData(phoenixCoolingCentersDemo)
   }, [selectedCity, phoenixCoolingCentersVisible, mapLoaded])
 
-  // Phoenix villages colored by temperature (today's average per neighborhood)
+  // Phoenix council districts colored by temperature (citywide hourly value projected to districts)
   useEffect(() => {
     if (!map.current || !mapLoaded) return
-    if (!map.current.getSource('phoenix-villages-temperature')) return
+    if (!map.current.getSource('phoenix-council-districts-temperature')) return
 
     const shouldShow = selectedCity === 'phoenix' && phoenixTemperatureNeighborhoodsVisible
     const setVis = (id, vis) => {
       if (map.current.getLayer(id)) map.current.setLayoutProperty(id, 'visibility', vis)
     }
 
-    setVis('phoenix-villages-temperature-fill', shouldShow ? 'visible' : 'none')
-    setVis('phoenix-villages-temperature-border', shouldShow ? 'visible' : 'none')
-    // We render chip labels as HTML markers (not symbol text).
-    setVis('phoenix-villages-temperature-labels', 'none')
-
-    // Clear any existing chip markers unless we are actively showing labels.
-    const clearChipMarkers = () => {
-      for (const m of phoenixTempLabelMarkersRef.current) {
-        try { m?.remove?.() } catch {}
-      }
-      phoenixTempLabelMarkersRef.current = []
-    }
+    setVis('phoenix-council-districts-temperature-fill', shouldShow ? 'visible' : 'none')
+    setVis('phoenix-council-districts-temperature-border', shouldShow ? 'visible' : 'none')
+    setVis('phoenix-council-districts-temperature-labels', shouldShow && phoenixTemperatureNeighborhoodsLabelsVisible ? 'visible' : 'none')
 
     if (!shouldShow) {
-      clearChipMarkers()
-      map.current.getSource('phoenix-villages-temperature').setData({ type: 'FeatureCollection', features: [] })
+      map.current.getSource('phoenix-council-districts-temperature').setData({ type: 'FeatureCollection', features: [] })
       return
     }
 
-    const baseVillages = phoenixVillagesGeojson || phoenixVillagesCache.current
-    if (!baseVillages?.features?.length) {
-      map.current.getSource('phoenix-villages-temperature').setData({ type: 'FeatureCollection', features: [] })
+    const baseDistricts = phoenixCouncilDistrictsGeojson || phoenixCouncilDistrictsCache.current
+    if (!baseDistricts?.features?.length) {
+      map.current.getSource('phoenix-council-districts-temperature').setData({ type: 'FeatureCollection', features: [] })
       return
     }
 
     let cancelled = false
 
-    const loadVillageHourlyTemps = async ({ name, lng, lat }) => {
-      // Desired coverage: 1 year back (history) + true forecast horizon + seasonal approx to ~3 months.
+    const TEMP_ARCHIVE_START = '2024-01-01'
+
+    const computeArchiveEndYmd = () => {
       const now = new Date()
-      const historyStart = addMonths(now, -12)
-      const forecastEnd = addMonths(now, 3)
+      const archiveEnd = new Date(now)
+      // Avoid duplicated hours with forecast endpoint past_days=92.
+      archiveEnd.setDate(archiveEnd.getDate() - 93)
+      return `${archiveEnd.getFullYear()}-${String(archiveEnd.getMonth() + 1).padStart(2, '0')}-${String(archiveEnd.getDate()).padStart(2, '0')}`
+    }
 
-      const cached = await getPhoenixTempsCache(name)
-      const inMem = phoenixVillageHourlyTempsCache.current.get(name)
-      const bestCached = inMem?.times?.length ? inMem : cached?.series
+    const loadDistrictSeries = async ({ districtId, lng, lat }) => {
+      const archiveEndYmd = computeArchiveEndYmd()
+      const cached = await getPhoenixDistrictTempsCache(districtId)
+      const cachedSeries = cached?.series
+      const cachedMeta = cached?.meta || {}
 
-      // If we have a cached merged series whose historical window already covers our range, reuse it.
-      const cachedStartMs = bestCached?.times?.length ? new Date(bestCached.times[0]).getTime() : NaN
-      const cachedEndMs = bestCached?.times?.length ? new Date(bestCached.times[bestCached.times.length - 1]).getTime() : NaN
-      const needHistoryStartMs = new Date(new Date(historyStart.getFullYear(), historyStart.getMonth(), 1)).getTime()
-      const needEndMs = new Date(new Date(forecastEnd.getFullYear(), forecastEnd.getMonth() + 1, 0, 23, 0, 0)).getTime()
-      const cacheCovers =
-        Number.isFinite(cachedStartMs) &&
-        Number.isFinite(cachedEndMs) &&
-        cachedStartMs <= needHistoryStartMs &&
-        cachedEndMs >= needEndMs
+      const needArchive = String(cachedMeta.archiveEndYmd || '') !== String(archiveEndYmd)
+      const needForecast = !cachedSeries?.times?.length || isForecastStale(cachedMeta.forecast, 6 * 60 * 60 * 1000)
 
-      const forecastStale = isForecastStale(cached?.meta?.forecast, 6 * 60 * 60 * 1000)
-      if (cacheCovers && !forecastStale) return bestCached
-
-      // Build historical month chunks (12 months, inclusive of current month).
-      const months = buildMonthKeysAround(now, 11, 0)
-      const monthSeries = []
-      for (const mk of months) {
-        if (cancelled) return null
-        const range = monthStartEndYmd(mk)
-        if (!range) continue
+      let archiveSeries = null
+      if (needArchive && archiveEndYmd >= TEMP_ARCHIVE_START) {
         try {
-          const s = await fetchArchiveHourlyTemps({ lng, lat, startYmd: range.startYmd, endYmd: range.endYmd })
-          if (s?.times?.length) monthSeries.push(s)
+          archiveSeries = await fetchArchiveHourlyTemps({
+            lng,
+            lat,
+            startYmd: TEMP_ARCHIVE_START,
+            endYmd: archiveEndYmd,
+          })
         } catch {
-          // If archive fails, keep going; we can still color with partial data.
+          archiveSeries = null
         }
       }
-      const historyMerged = mergeHourlySeries(monthSeries)
 
-      // True forecast horizon (Open‑Meteo forecast endpoint). We take 16 days ahead to maximize horizon.
       let forecastSeries = null
       try {
-        forecastSeries = await fetchForecastHourlyTemps({ lng, lat, pastDays: 0, forecastDays: 16 })
+        if (needForecast) {
+          forecastSeries = await fetchForecastHourlyTemps({
+            lng,
+            lat,
+            pastDays: 92,
+            forecastDays: 16,
+          })
+        }
       } catch {
         forecastSeries = null
       }
 
-      // Seasonal approx to reach ~3 months forward: last year's same hour pattern.
-      // We only fill beyond the last forecast timestamp up to our target month end.
-      const targetEnd = new Date(forecastEnd.getFullYear(), forecastEnd.getMonth() + 1, 0, 23, 0, 0)
-      const mergedForLookup = mergeHourlySeries([historyMerged, forecastSeries].filter(Boolean))
-      const lastKnownMs = mergedForLookup?.times?.length ? new Date(mergedForLookup.times[mergedForLookup.times.length - 1]).getTime() : NaN
-      const approxTimes = []
-      if (Number.isFinite(lastKnownMs)) {
-        let t = new Date(lastKnownMs)
-        // Start at next hour boundary
-        t.setMinutes(0, 0, 0)
-        t = new Date(t.getTime() + 60 * 60 * 1000)
-        while (t.getTime() <= targetEnd.getTime()) {
-          // Keep the same local format Open‑Meteo returns: YYYY-MM-DDTHH:00
-          const y = t.getFullYear()
-          const m = String(t.getMonth() + 1).padStart(2, '0')
-          const d = String(t.getDate()).padStart(2, '0')
-          const hh = String(t.getHours()).padStart(2, '0')
-          approxTimes.push(`${y}-${m}-${d}T${hh}:00`)
-          t = new Date(t.getTime() + 60 * 60 * 1000)
-        }
-      }
-      const seasonalApprox = approxTimes.length ? buildSeasonalApproxFromLastYear({ baseSeries: historyMerged, targetTimes: approxTimes }) : null
-
-      const merged = mergeHourlySeries([historyMerged, forecastSeries, seasonalApprox].filter(Boolean))
-
+      const merged = mergeHourlySeries([needArchive ? archiveSeries : cachedSeries, forecastSeries].filter(Boolean))
       const meta = {
-        history: { months, fetchedAtMs: Date.now() },
-        forecast: { fetchedAtMs: Date.now() },
-        approx: { monthsForward: 3, source: 'last_year_same_hour' },
+        archiveEndYmd,
+        archive: { fetchedAtMs: needArchive ? Date.now() : Number(cachedMeta?.archive?.fetchedAtMs || 0) },
+        forecast: { fetchedAtMs: needForecast ? Date.now() : Number(cachedMeta?.forecast?.fetchedAtMs || 0) },
       }
-      phoenixVillageHourlyTempsCache.current.set(name, merged)
-      await setPhoenixTempsCache(name, { series: merged, meta })
+      await setPhoenixDistrictTempsCache(districtId, { series: merged, meta })
       return merged
     }
 
     const run = async () => {
-      const features = baseVillages.features
-      let timelineTimes = phoenixTempTimeline.times
+      const features = baseDistricts.features
+      const dayKey = `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}-${String(selectedDate.getDate()).padStart(2, '0')}`
+      const noonPrefix = `${dayKey}T12:`
 
-      const findClosestTimeIndex = (times, targetMs) => {
-        let bestIdx = 0
-        let bestDelta = Infinity
-        for (let i = 0; i < times.length; i++) {
-          const ms = new Date(String(times[i] || '')).getTime()
-          if (!Number.isFinite(ms)) continue
-          const d = Math.abs(ms - targetMs)
-          if (d < bestDelta) {
-            bestDelta = d
-            bestIdx = i
-          }
-        }
-        return bestIdx
-      }
-
-      // Bootstrap timeline from first village (cache/archive/forecast/approx)
-      if (!timelineTimes?.length) {
-        const firstWithCenter = features.find((f) => getGeojsonFeatureCenter(f))
-        const center = firstWithCenter ? getGeojsonFeatureCenter(firstWithCenter) : null
-        const name = firstWithCenter?.properties?.NAME
-        if (center) {
-          try {
-            setPhoenixTempTimeline((prev) => ({ ...prev, status: 'loading' }))
-            const series = name
-              ? await loadVillageHourlyTemps({ name, lng: center[0], lat: center[1] })
-              : await fetchForecastHourlyTemps({ lng: center[0], lat: center[1], pastDays: 3, forecastDays: 7 })
-            if (cancelled) return
-            if (series?.times?.length) {
-              timelineTimes = series.times
-              // Default idx = closest to current time
-              const bestIdx = findClosestTimeIndex(timelineTimes, Date.now())
-              setPhoenixTempTimeline({ status: 'ready', times: timelineTimes, idx: bestIdx })
-            } else {
-              setPhoenixTempTimeline((prev) => ({ ...prev, status: 'error' }))
-            }
-          } catch {
-            if (!cancelled) setPhoenixTempTimeline((prev) => ({ ...prev, status: 'error' }))
-          }
-        }
-      }
-
-      const idx = Math.max(0, Math.min((phoenixTempTimeline.idx || 0), (timelineTimes?.length || 1) - 1))
       const out = []
       for (const f of features) {
         if (cancelled) return
-        const name = f?.properties?.NAME
-        const center = getGeojsonFeatureCenter(f)
-        if (!name || !center) continue
+        const districtId = String(f?.properties?.DISTRICT ?? '').trim()
+        const center = getPolygonCentroidLngLat(f)
+        if (!districtId || !center) continue
         const [lng, lat] = center
         if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue
 
-        const cached = phoenixVillageHourlyTempsCache.current.get(name)
-        let series = cached
-        if (!series?.times?.length) {
-          series = await loadVillageHourlyTemps({ name, lng, lat })
+        const series = await loadDistrictSeries({ districtId, lng, lat })
+        if (cancelled) return
+        if (!series?.times?.length || !series?.tempsC?.length) continue
+
+        let idx = series.times.findIndex((t) => String(t || '').startsWith(noonPrefix))
+        if (idx < 0) {
+          // Fallback: daily average for that district point.
+          let sum = 0
+          let n = 0
+          for (let i = 0; i < series.times.length; i++) {
+            const t = String(series.times[i] || '')
+            if (!t.startsWith(dayKey)) continue
+            const v = Number(series.tempsC[i])
+            if (!Number.isFinite(v)) continue
+            sum += v
+            n += 1
+          }
+          const avgC = n ? (sum / n) : null
+          const avgF = Number.isFinite(avgC) ? (avgC * 9) / 5 + 32 : null
+          const avgFInt = Number.isFinite(avgF) ? Math.round(avgF) : null
+          out.push({
+            ...f,
+            properties: {
+              ...(f.properties || {}),
+              tempAvgC: Number.isFinite(avgC) ? avgC : null,
+              tempF: Number.isFinite(avgFInt) ? avgFInt : null,
+            },
+          })
+          continue
         }
 
-        const v = series?.tempsC?.[idx]
+        const v = series.tempsC?.[idx]
         const tempAvgC = Number.isFinite(v) ? v : null
         const tempF = Number.isFinite(tempAvgC) ? (tempAvgC * 9) / 5 + 32 : null
         const tempFInt = Number.isFinite(tempF) ? Math.round(tempF) : null
@@ -3617,40 +3671,10 @@ export default function MapView() {
       }
 
       if (cancelled) return
-      map.current.getSource('phoenix-villages-temperature').setData({
+      map.current.getSource('phoenix-council-districts-temperature').setData({
         type: 'FeatureCollection',
         features: out,
       })
-
-      // Chip labels
-      clearChipMarkers()
-      if (phoenixTemperatureNeighborhoodsLabelsVisible) {
-        for (const f of out) {
-          const center = getGeojsonFeatureCenter(f)
-          if (!center) continue
-          const tempF = f?.properties?.tempF
-          if (!Number.isFinite(tempF)) continue
-
-          const el = document.createElement('div')
-          el.style.pointerEvents = 'none'
-          el.style.background = 'rgba(0,0,0,0.70)'
-          el.style.border = '1px solid rgba(255,255,255,0.12)'
-          el.style.borderRadius = '999px'
-          el.style.padding = '4px 8px'
-          el.style.boxShadow = '0 8px 18px rgba(0,0,0,0.35)'
-          el.style.color = 'rgba(255,255,255,0.92)'
-          el.style.fontSize = '11px'
-          el.style.fontWeight = '700'
-          el.style.letterSpacing = '0.01em'
-          el.style.whiteSpace = 'nowrap'
-          el.textContent = `Temp ${tempF}°F`
-
-          const marker = new mapLib.current.Marker({ element: el, anchor: 'center' })
-            .setLngLat(center)
-            .addTo(map.current)
-          phoenixTempLabelMarkersRef.current.push(marker)
-        }
-      }
     }
 
     run()
@@ -3659,115 +3683,10 @@ export default function MapView() {
     selectedCity,
     phoenixTemperatureNeighborhoodsVisible,
     phoenixTemperatureNeighborhoodsLabelsVisible,
-    phoenixVillagesGeojson,
+    phoenixCouncilDistrictsGeojson,
     mapLoaded,
-    phoenixTempTimeline.idx,
+    selectedDate,
   ])
-
-  const formatPhoenixTimelineLabel = (raw) => {
-    // raw like "2026-04-21T14:00"
-    const s = String(raw || '')
-    const d = new Date(s)
-    if (Number.isNaN(d.getTime())) return s
-    return d.toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric' })
-  }
-
-  const formatPhoenixDayButton = (dayKey) => {
-    if (!dayKey) return 'Today'
-    const d = new Date(`${dayKey}T00:00:00`)
-    const today = new Date()
-    const isToday =
-      d.getFullYear() === today.getFullYear() &&
-      d.getMonth() === today.getMonth() &&
-      d.getDate() === today.getDate()
-    const y = d.getFullYear()
-    const m = String(d.getMonth() + 1).padStart(2, '0')
-    const dd = String(d.getDate()).padStart(2, '0')
-    return `${isToday ? 'Today' : d.toLocaleDateString('en-US', { weekday: 'short' })}, ${y}/${m}/${dd}`
-  }
-
-  const parseTimeToParts = (raw) => {
-    // raw like "2026-04-21T14:00"
-    const s = String(raw || '')
-    const m = s.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/)
-    if (!m) return null
-    return { dayKey: m[1], hour: Number(m[2]), minute: Number(m[3]) }
-  }
-
-  const buildDayIndex = (times, dayKey) => {
-    const idxByHour = new Map() // hour -> closest index
-    let firstIdx = null
-    let lastIdx = null
-    for (let i = 0; i < times.length; i++) {
-      const p = parseTimeToParts(times[i])
-      if (!p || p.dayKey !== dayKey || !Number.isFinite(p.hour)) continue
-      if (firstIdx === null) firstIdx = i
-      lastIdx = i
-      if (!idxByHour.has(p.hour)) idxByHour.set(p.hour, i)
-    }
-    return { idxByHour, firstIdx, lastIdx }
-  }
-
-  const phoenixTimelineDerived = useMemo(() => {
-    const times = phoenixTempTimeline?.times || []
-    if (!times.length) return null
-    const current = parseTimeToParts(times[phoenixTempTimeline.idx])
-    const dayKey = phoenixTimelineUi.dayKey || current?.dayKey || parseTimeToParts(times[0])?.dayKey
-    if (!dayKey) return null
-    const dayIndex = buildDayIndex(times, dayKey)
-    return { times, dayKey, dayIndex }
-  }, [phoenixTempTimeline.times, phoenixTempTimeline.idx, phoenixTimelineUi.dayKey])
-
-  const setTimelineIdxByHour = (hour) => {
-    const derived = phoenixTimelineDerived
-    if (!derived) return
-    const clamped = Math.max(phoenixTimelineUi.minHour, Math.min(phoenixTimelineUi.maxHour, Number(hour)))
-    const idx = derived.dayIndex.idxByHour.get(clamped)
-    if (typeof idx === 'number') setPhoenixTempTimeline((prev) => ({ ...prev, idx }))
-  }
-
-  const stepTimeline = (dir) => {
-    const derived = phoenixTimelineDerived
-    if (!derived) return
-    const cur = parseTimeToParts(derived.times[phoenixTempTimeline.idx])
-    if (!cur) return
-    const minutes = (phoenixTimelineUi.stepMinutes || 60) * (dir || 1)
-    const nextMinutes = cur.hour * 60 + cur.minute + minutes
-    const nextHour = Math.round(nextMinutes / 60)
-    setTimelineIdxByHour(nextHour)
-  }
-
-  const railPctToTime = (pct) => {
-    const minHour = phoenixTimelineUi.minHour ?? 0
-    const maxHour = phoenixTimelineUi.maxHour ?? 23
-    const totalMinutes = (maxHour - minHour) * 60
-    const elapsed = Math.round(Math.max(0, Math.min(1, pct)) * totalMinutes)
-    const minutes = minHour * 60 + elapsed
-    const hour = Math.floor(minutes / 60)
-    const minute = minutes % 60
-    return { hour, minute }
-  }
-
-  const hourLabel = (h) => {
-    const use12 = true
-    if (!use12) return `${String(h).padStart(2, '0')}:00`
-    const hh = ((h + 11) % 12) + 1
-    const ampm = h < 12 ? 'AM' : 'PM'
-    return `${hh}${ampm}`
-  }
-
-  const dayKeyFromDate = (d) => {
-    const yyyy = d.getFullYear()
-    const mm = String(d.getMonth() + 1).padStart(2, '0')
-    const dd = String(d.getDate()).padStart(2, '0')
-    return `${yyyy}-${mm}-${dd}`
-  }
-
-  const addDays = (d, deltaDays) => {
-    const x = new Date(d)
-    x.setDate(x.getDate() + deltaDays)
-    return x
-  }
 
   const formatHeatDeathsDayLabel = (dayKey) => {
     const d = new Date(`${dayKey}T00:00:00`)
@@ -5074,6 +4993,7 @@ export default function MapView() {
         })()
 
         const isPhoenixCalls = selectedCity === 'phoenix' && phoenixActiveMasterLayer === 'calls'
+        const isPhoenixTemperature = selectedCity === 'phoenix' && !!phoenixTemperatureNeighborhoodsVisible
         const isAggHistorical =
           selectedCity === 'phoenix' &&
           !!phoenixHeatIllnessesVisible &&
@@ -5132,6 +5052,12 @@ export default function MapView() {
               return `${startStr}–${endStr}`
             }
             return null
+          }
+          if (isPhoenixTemperature) {
+            if (label === 'Today') return 'Live temperature data available'
+            if (label === 'Forecast') return 'Open‑Meteo forecast (16 days)'
+            // Historical: show the selected day
+            return selectedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
           }
           if (isAggHistorical) return historicalCoverage
           if (label === 'Today') {
@@ -5205,6 +5131,43 @@ export default function MapView() {
       {((selectedCity === 'baltimore' && baltimore311Style === 'heatmap') || (selectedCity === 'phoenix' && callsForServiceStyle === 'heatmap')) && (
         <HeatmapLegend />
       )}
+
+      {selectedCity === 'phoenix' &&
+        phoenixActiveMasterLayer === 'calls' &&
+        callsForServiceVisible &&
+        !phoenixVillagesCfsRagVisible &&
+        !phoenixCouncilDistrictsCfsRagVisible &&
+        callsForServiceStyle === 'default' && (
+        <div
+          style={{
+            position: 'fixed',
+            // Matches LeftNav.jsx: left 16px + width 48px + gap 16px
+            left: 'calc(16px + 48px + 16px)',
+            bottom: 24,
+            zIndex: 50,
+            pointerEvents: 'none',
+          }}
+        >
+          <CallsForServiceLegend />
+        </div>
+      )}
+
+      {selectedCity === 'phoenix' && phoenixTemperatureNeighborhoodsVisible && (
+        <div
+          style={{
+            position: 'fixed',
+            // Matches LeftNav.jsx: left 16px + width 48px + gap 16px
+            left: 'calc(16px + 48px + 16px)',
+            bottom: 24,
+            zIndex: 50,
+            pointerEvents: 'none',
+          }}
+        >
+          <TemperatureLegend />
+        </div>
+      )}
+
+      <HeatHomelessnessLegend />
 
       {selectedCity === 'phoenix' && phoenixHeatDeathsVisible && phoenixHeatDeathsTimeline?.months?.length > 0 && (
         <div
@@ -5370,173 +5333,6 @@ export default function MapView() {
         </div>
       )}
 
-      {selectedCity === 'phoenix' && phoenixTemperatureNeighborhoodsVisible && phoenixTempTimeline?.times?.length > 0 && phoenixTimelineDerived && (
-        <div
-          style={{
-            position: 'fixed',
-            left: 24,
-            right: 24,
-            bottom: 18,
-            zIndex: 60,
-            pointerEvents: 'none',
-          }}
-        >
-          {(() => {
-            const raw = phoenixTempTimeline.times[phoenixTempTimeline.idx]
-            const ms = new Date(String(raw || '')).getTime()
-            const nowMs = Date.now()
-            const mode = Number.isFinite(ms) && ms > nowMs ? 'forecast' : 'history'
-            return (
-          <div
-            className={`tl-scrubber ${mode === 'forecast' ? 'tl-scrubber--forecast' : 'tl-scrubber--history'}`}
-            style={{
-              pointerEvents: 'auto',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 12,
-              height: 'var(--tl-height)',
-            }}
-          >
-            <button
-              type="button"
-              className="tl-btn"
-              aria-label="Previous time"
-              onClick={() => stepTimeline(-1)}
-            >
-              Previous
-            </button>
-
-            <button
-              type="button"
-              className="tl-date"
-              onClick={() => phoenixTimelineDateInputRef.current?.showPicker?.() || phoenixTimelineDateInputRef.current?.click?.()}
-              aria-label="Change date"
-            >
-              {formatPhoenixDayButton(phoenixTimelineDerived.dayKey)}
-            </button>
-            <span className={`tl-mode ${mode === 'forecast' ? 'tl-mode--forecast' : 'tl-mode--history'}`}>
-              {mode === 'forecast' ? 'Forecast' : 'History'}
-            </span>
-            <input
-              ref={phoenixTimelineDateInputRef}
-              type="date"
-              className="tl-date-input"
-              value={phoenixTimelineDerived.dayKey}
-              onChange={(e) => {
-                const dayKey = e.target.value
-                setPhoenixTimelineUi((prev) => ({ ...prev, dayKey }))
-                // keep current hour
-                const cur = parseTimeToParts(phoenixTimelineDerived.times[phoenixTempTimeline.idx])
-                const hour = cur?.hour ?? 12
-                // Recompute index by hour on that day (async via memo next render)
-                setTimeout(() => setTimelineIdxByHour(hour), 0)
-              }}
-            />
-
-            <div
-              className="tl-rail"
-              ref={phoenixTimelineRailRef}
-              onPointerDown={(e) => {
-                phoenixTimelineDragRef.current.dragging = true
-                e.currentTarget.setPointerCapture?.(e.pointerId)
-                const rect = phoenixTimelineRailRef.current?.getBoundingClientRect?.()
-                if (!rect) return
-                const pct = (e.clientX - rect.left) / Math.max(1, rect.width)
-                const t = railPctToTime(pct)
-                setTimelineIdxByHour(t.hour)
-              }}
-              onPointerMove={(e) => {
-                if (!phoenixTimelineDragRef.current.dragging) return
-                const rect = phoenixTimelineRailRef.current?.getBoundingClientRect?.()
-                if (!rect) return
-                const pct = (e.clientX - rect.left) / Math.max(1, rect.width)
-                const t = railPctToTime(pct)
-                setTimelineIdxByHour(t.hour)
-              }}
-              onPointerUp={() => { phoenixTimelineDragRef.current.dragging = false }}
-              onPointerCancel={() => { phoenixTimelineDragRef.current.dragging = false }}
-              onPointerLeave={() => { phoenixTimelineDragRef.current.dragging = false }}
-            >
-              <div className="tl-ticks">
-                {Array.from({ length: (phoenixTimelineUi.maxHour - phoenixTimelineUi.minHour + 1) }, (_, i) => {
-                  const h = phoenixTimelineUi.minHour + i
-                  const cur = parseTimeToParts(phoenixTimelineDerived.times[phoenixTempTimeline.idx])
-                  const isCurrentHour = cur?.hour === h
-                  const cls = `tl-tick tl-tick--${h} ${isCurrentHour ? 'tl-tick--active' : ''}`
-                  return (
-                    <button
-                      key={h}
-                      type="button"
-                      className={cls}
-                      onClick={() => setTimelineIdxByHour(h)}
-                      aria-label={`Jump to ${hourLabel(h)}`}
-                    >
-                      {hourLabel(h)}
-                    </button>
-                  )
-                })}
-              </div>
-
-              {(() => {
-                const cur = parseTimeToParts(phoenixTimelineDerived.times[phoenixTempTimeline.idx])
-                const minHour = phoenixTimelineUi.minHour ?? 0
-                const maxHour = phoenixTimelineUi.maxHour ?? 23
-                const totalMinutes = (maxHour - minHour) * 60
-                const elapsed = ((cur?.hour ?? minHour) - minHour) * 60 + (cur?.minute ?? 0)
-                const pct = totalMinutes > 0 ? Math.max(0, Math.min(1, elapsed / totalMinutes)) : 0
-                return (
-                  <div
-                    className="tl-thumb"
-                    role="slider"
-                    tabIndex={0}
-                    aria-valuemin={minHour}
-                    aria-valuemax={maxHour}
-                    aria-valuenow={cur?.hour ?? minHour}
-                    aria-label={`Time scrubber, ${hourLabel(cur?.hour ?? minHour)}`}
-                    style={{ left: `calc(${(pct * 100).toFixed(4)}% - 6px)` }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'ArrowLeft') { e.preventDefault(); stepTimeline(-1) }
-                      if (e.key === 'ArrowRight') { e.preventDefault(); stepTimeline(1) }
-                      if (e.key === 'Home') { e.preventDefault(); setTimelineIdxByHour(minHour) }
-                      if (e.key === 'End') { e.preventDefault(); setTimelineIdxByHour(maxHour) }
-                    }}
-                    onPointerDown={(e) => {
-                      e.currentTarget.setPointerCapture?.(e.pointerId)
-                      phoenixTimelineDragRef.current.dragging = true
-                      const rect = phoenixTimelineRailRef.current?.getBoundingClientRect?.()
-                      if (!rect) return
-                      const pct = (e.clientX - rect.left) / Math.max(1, rect.width)
-                      const t = railPctToTime(pct)
-                      setTimelineIdxByHour(t.hour)
-                    }}
-                    onPointerMove={(e) => {
-                      if (!phoenixTimelineDragRef.current.dragging) return
-                      const rect = phoenixTimelineRailRef.current?.getBoundingClientRect?.()
-                      if (!rect) return
-                      const pct = (e.clientX - rect.left) / Math.max(1, rect.width)
-                      const t = railPctToTime(pct)
-                      setTimelineIdxByHour(t.hour)
-                    }}
-                    onPointerUp={() => { phoenixTimelineDragRef.current.dragging = false }}
-                    onPointerCancel={() => { phoenixTimelineDragRef.current.dragging = false }}
-                  />
-                )
-              })()}
-            </div>
-
-            <button
-              type="button"
-              className="tl-btn"
-              aria-label="Next time"
-              onClick={() => stepTimeline(1)}
-            >
-              Next
-            </button>
-          </div>
-            )
-          })()}
-        </div>
-      )}
     </>
   )
 }

@@ -189,6 +189,8 @@ export default function ManageMapLayersPanel() {
     setPhoenixHeatIllnessesGranularity,
     phoenixHeatIllnessesGeoView,
     setPhoenixHeatIllnessesGeoView,
+    phoenixHeatIllnessGeoLabelsVisible,
+    setPhoenixHeatIllnessGeoLabelsVisible,
   } = usePanelContext()
 
   const phoenixHeatIllnessCounts = useMemo(() => {
@@ -435,10 +437,20 @@ export default function ManageMapLayersPanel() {
     }
   }
 
+  const enforcePhoenixHeatSubLayerExclusivity = (keep) => {
+    // Only one of: Heat Illnesses | Heat Deaths | Temperature
+    if (keep !== 'illnesses') setPhoenixHeatIllnessesVisible(false)
+    if (keep !== 'deaths') setPhoenixHeatDeathsVisible(false)
+    if (keep !== 'temperature') setPhoenixTemperatureNeighborhoodsVisible(false)
+  }
+
   const togglePhoenixHeatIllnessesLayer = () => {
     setPhoenixHeatIllnessesVisible((prev) => {
       const next = !prev
-      if (next) activateHeatMasterIfNeeded()
+      if (next) {
+        enforcePhoenixHeatSubLayerExclusivity('illnesses')
+        activateHeatMasterIfNeeded()
+      }
       return next
     })
   }
@@ -446,7 +458,10 @@ export default function ManageMapLayersPanel() {
   const togglePhoenixHeatDeathsLayer = () => {
     setPhoenixHeatDeathsVisible((prev) => {
       const next = !prev
-      if (next) activateHeatMasterIfNeeded()
+      if (next) {
+        enforcePhoenixHeatSubLayerExclusivity('deaths')
+        activateHeatMasterIfNeeded()
+      }
       return next
     })
   }
@@ -462,7 +477,10 @@ export default function ManageMapLayersPanel() {
   const togglePhoenixTemperatureLayer = () => {
     setPhoenixTemperatureNeighborhoodsVisible((prev) => {
       const next = !prev
-      if (next) activateHeatMasterIfNeeded()
+      if (next) {
+        enforcePhoenixHeatSubLayerExclusivity('temperature')
+        activateHeatMasterIfNeeded()
+      }
       return next
     })
   }
@@ -1643,6 +1661,29 @@ export default function ManageMapLayersPanel() {
                         </label>
                       )
 
+                      const renderShowDistrictOverlay = () => (
+                        <label className="flex items-center justify-between gap-2 rounded-md border px-2 py-2 text-[11px]"
+                          style={{ borderColor: 'var(--color-gray-700)', background: 'rgba(255,255,255,0.02)', color: 'var(--color-gray-200)' }}
+                        >
+                          <span className="min-w-0 truncate">Show district overlay</span>
+                          <input
+                            type="checkbox"
+                            checked={!!phoenixCouncilDistrictBoundariesVisible}
+                            onChange={() => setPhoenixCouncilDistrictBoundariesVisible((v) => {
+                              const next = !v
+                              if (next) {
+                                setPhoenixNeighborhoodBoundariesVisible(false)
+                                setPhoenixHomelessnessAffectedNeighborhoodsVisible(false)
+                                setPhoenixVillagesCfsRagVisible(false)
+                                setPhoenixCouncilDistrictsCfsRagVisible(false)
+                              }
+                              return next
+                            })}
+                            className="h-3.5 w-3.5 accent-yellow-500"
+                          />
+                        </label>
+                      )
+
                       return (
                         <div key={layer.id} className="space-y-2">
                           {/* Heat parent accordion (master toggle for all 3 sub-layers) */}
@@ -1812,6 +1853,34 @@ export default function ManageMapLayersPanel() {
                                           Villages
                                         </button>
                                       </div>
+
+                                      <div className="space-y-1 mt-2 pt-2 border-t" style={{ borderColor: 'var(--color-gray-700)' }}>
+                                        <div className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--color-gray-500)' }}>
+                                          Area names
+                                        </div>
+                                        <div className="flex flex-col gap-1.5" role="radiogroup" aria-label="Show or hide area names on heat illness map">
+                                          <label className="flex items-center gap-2 cursor-pointer text-[11px]" style={{ color: 'var(--color-gray-200)' }}>
+                                            <input
+                                              type="radio"
+                                              name="phoenix-heat-illness-area-labels"
+                                              className="h-3 w-3 shrink-0 accent-yellow-500"
+                                              checked={phoenixHeatIllnessGeoLabelsVisible}
+                                              onChange={() => setPhoenixHeatIllnessGeoLabelsVisible(true)}
+                                            />
+                                            <span>Show {phoenixHeatIllnessesGeoView === 'villages' ? 'neighborhood' : 'district'} names</span>
+                                          </label>
+                                          <label className="flex items-center gap-2 cursor-pointer text-[11px]" style={{ color: 'var(--color-gray-200)' }}>
+                                            <input
+                                              type="radio"
+                                              name="phoenix-heat-illness-area-labels"
+                                              className="h-3 w-3 shrink-0 accent-yellow-500"
+                                              checked={!phoenixHeatIllnessGeoLabelsVisible}
+                                              onChange={() => setPhoenixHeatIllnessGeoLabelsVisible(false)}
+                                            />
+                                            <span>Hide names</span>
+                                          </label>
+                                        </div>
+                                      </div>
                                     </div>
                                   </div>
                                 )}
@@ -1851,7 +1920,7 @@ export default function ManageMapLayersPanel() {
                                           className="h-3.5 w-3.5 accent-yellow-500"
                                         />
                                       </label>
-                                      {renderShowNeighborhoodOverlay()}
+                                      {renderShowDistrictOverlay()}
                                     </div>
                                   </div>
                                 )}
@@ -1880,18 +1949,18 @@ export default function ManageMapLayersPanel() {
                                       <div className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--color-gray-500)' }}>
                                         Map options
                                       </div>
-                                      <label className="flex items-center justify-between gap-2 rounded-md border px-2 py-2 text-[11px]"
-                                        style={{ borderColor: 'var(--color-gray-700)', background: 'rgba(255,255,255,0.02)', color: 'var(--color-gray-200)' }}
-                                      >
-                                        <span className="min-w-0 truncate">Show labels</span>
-                                        <input
-                                          type="checkbox"
-                                          checked={labelsOn}
-                                          onChange={() => setPhoenixTemperatureNeighborhoodsLabelsVisible((v) => !v)}
-                                          className="h-3.5 w-3.5 accent-yellow-500"
-                                        />
-                                      </label>
-                                      {renderShowNeighborhoodOverlay()}
+                                      <div className="flex flex-col gap-1.5 mt-2" role="radiogroup" aria-label="Temperature label options">
+                                        <label className="flex items-center gap-2 cursor-pointer text-[11px]" style={{ color: 'var(--color-gray-200)' }}>
+                                          <input
+                                            type="radio"
+                                            name="phoenix-temperature-labels"
+                                            className="h-3 w-3 shrink-0 accent-yellow-500"
+                                            checked={!!phoenixTemperatureNeighborhoodsLabelsVisible}
+                                            onChange={() => setPhoenixTemperatureNeighborhoodsLabelsVisible(true)}
+                                          />
+                                          <span>Show Temp on the map</span>
+                                        </label>
+                                      </div>
                                     </div>
                                   </div>
                                 )}

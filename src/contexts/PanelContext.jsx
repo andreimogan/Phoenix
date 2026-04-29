@@ -36,15 +36,15 @@ export const PanelProvider = ({ children }) => {
   const [layersVisible, setLayersVisible] = useState(false)
 
   // Floating windows (right side)
-  const [phoenixWeatherWindowVisible, setPhoenixWeatherWindowVisible] = useState(true)
+  const [phoenixWeatherWindowVisible, setPhoenixWeatherWindowVisible] = useState(false)
   const [phoenixLatest311WindowVisible, setPhoenixLatest311WindowVisible] = useState(false)
   const [phoenixInterventionWindowVisible, setPhoenixInterventionWindowVisible] = useState(false)
-  const [phoenixBriefingRoomVisible, setPhoenixBriefingRoomVisible] = useState(false)
-  const [kpiCardsVisible, setKpiCardsVisible] = useState(true)
+  const [phoenixBriefingRoomVisible, setPhoenixBriefingRoomVisible] = useState(true)
+  const [kpiCardsVisible, setKpiCardsVisible] = useState(false)
 
   // Right-side windows order (based on enable sequence)
   // Allowed ids: 'weather' | 'latest311' | 'intervention' | 'briefingRoom'
-  const [rightWindowsOrder, setRightWindowsOrder] = useState(() => (phoenixWeatherWindowVisible ? ['weather'] : []))
+  const [rightWindowsOrder, setRightWindowsOrder] = useState(() => ['briefingRoom'])
 
   // Right-side windows collapsed state (minimized)
   const [rightWindowsCollapsed, setRightWindowsCollapsed] = useState({
@@ -171,7 +171,7 @@ export const PanelProvider = ({ children }) => {
   const [phoenixCouncilDistrictsEnabled, setPhoenixCouncilDistrictsEnabled] = useState({}) // { [DISTRICT]: boolean }
 
   // Calls for Service (Phoenix) — derived from CSV + geocoding
-  const [callsForServiceVisible, setCallsForServiceVisible] = useState(true)
+  const [callsForServiceVisible, setCallsForServiceVisible] = useState(false)
   const [callsForServiceStyle, setCallsForServiceStyle] = useState('default') // 'default' | 'cluster' | 'heatmap'
   const [callsForServiceTypes, setCallsForServiceTypes] = useState({}) // { [FINAL_CALL_TYPE]: boolean }
   const [callsForServiceBuckets, setCallsForServiceBuckets] = useState([]) // [{ bucketId, bucketName, total, types: [{typeName,count}] }]
@@ -210,25 +210,27 @@ export const PanelProvider = ({ children }) => {
   const [phoenixHomelessnessCategoryEnabled, setPhoenixHomelessnessCategoryEnabled] = useState({}) // { [CATEGORY]: boolean }
   const [phoenixHomelessnessAffectedNeighborhoodsVisible, setPhoenixHomelessnessAffectedNeighborhoodsVisible] = useState(false)
   const [phoenixTemperatureNeighborhoodsVisible, setPhoenixTemperatureNeighborhoodsVisible] = useState(false)
-  const [phoenixTemperatureNeighborhoodsLabelsVisible, setPhoenixTemperatureNeighborhoodsLabelsVisible] = useState(false)
+  const [phoenixTemperatureNeighborhoodsLabelsVisible, setPhoenixTemperatureNeighborhoodsLabelsVisible] = useState(true)
   const [phoenixHeatDeathsVisible, setPhoenixHeatDeathsVisible] = useState(false)
   const [phoenixHeatDeathsLabelsVisible, setPhoenixHeatDeathsLabelsVisible] = useState(false)
 
-  const [phoenixHeatIllnessesVisible, setPhoenixHeatIllnessesVisible] = useState(false)
+  const [phoenixHeatIllnessesVisible, setPhoenixHeatIllnessesVisible] = useState(true)
   const [phoenixCoolingCentersVisible, setPhoenixCoolingCentersVisible] = useState(false)
   const [phoenixHeatIllnessesEnabled, setPhoenixHeatIllnessesEnabled] = useState({}) // { [Heat_Illness]: boolean }
   // Time mode for the Heat Illnesses choropleth.
   // 'current' = follow the calendar (week or month around the selected date)
   // 'all_historical' = aggregate every historical row regardless of date
-  const [phoenixHeatIllnessesTimeMode, setPhoenixHeatIllnessesTimeMode] = useState('current')
+  const [phoenixHeatIllnessesTimeMode, setPhoenixHeatIllnessesTimeMode] = useState('all_historical')
   // Granularity used while in the 'current' time mode.
   const [phoenixHeatIllnessesGranularity, setPhoenixHeatIllnessesGranularity] = useState('week') // 'week' | 'month'
   // Heat illnesses geometry: show choropleth over council districts or villages.
   const [phoenixHeatIllnessesGeoView, setPhoenixHeatIllnessesGeoView] = useState('districts') // 'districts' | 'villages'
+  // Choropleth name labels on the map (district or village polygons for heat illnesses).
+  const [phoenixHeatIllnessGeoLabelsVisible, setPhoenixHeatIllnessGeoLabelsVisible] = useState(true)
 
   // Phoenix master map-layer selector — only one primary use-case at a time.
   // 'calls' | 'heat-homelessness' | null
-  const [phoenixActiveMasterLayer, setPhoenixActiveMasterLayer] = useState('calls')
+  const [phoenixActiveMasterLayer, setPhoenixActiveMasterLayer] = useState('heat-homelessness')
 
   // Enforce Phoenix primary-layer exclusivity. Switching the master layer turns
   // off any visibilities belonging to the *other* group; setting it to null
@@ -1083,6 +1085,8 @@ export const PanelProvider = ({ children }) => {
     setPhoenixHeatIllnessesGranularity,
     phoenixHeatIllnessesGeoView,
     setPhoenixHeatIllnessesGeoView,
+    phoenixHeatIllnessGeoLabelsVisible,
+    setPhoenixHeatIllnessGeoLabelsVisible,
 
     // Phoenix master layer (mutually exclusive primary use-case)
     phoenixActiveMasterLayer,

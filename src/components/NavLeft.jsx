@@ -34,6 +34,7 @@ export default function NavLeft() {
     phoenixCallsForServiceMaxDate,
     phoenixHeatIllnessesVisible,
     phoenixHeatIllnessesTimeMode,
+    phoenixTemperatureNeighborhoodsVisible,
   } = usePanelContext()
   const [cityOpen, setCityOpen] = useState(false)
   const [dateOpen, setDateOpen] = useState(false)
@@ -109,12 +110,22 @@ export default function NavLeft() {
   const getMaxSelectableDate = () => {
     const now = new Date()
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0)
-    // When viewing aggregated historical data, prevent selecting future dates.
-    if (selectedCity === 'phoenix' && String(phoenixHeatIllnessesTimeMode || 'current') === 'all_historical') {
+    // When viewing aggregated historical Heat Illness data, prevent selecting future dates.
+    if (
+      selectedCity === 'phoenix' &&
+      phoenixHeatIllnessesVisible &&
+      String(phoenixHeatIllnessesTimeMode || 'current') === 'all_historical'
+    ) {
       return today
     }
     if (selectedCity === 'phoenix' && phoenixHeatIllnessesVisible && heatIllnessWeekBuckets.forecastEndDate) {
       return heatIllnessWeekBuckets.forecastEndDate
+    }
+    // Temperature: allow looking up to 16 days ahead when the layer is on.
+    if (selectedCity === 'phoenix' && phoenixTemperatureNeighborhoodsVisible) {
+      const max = new Date(today)
+      max.setDate(max.getDate() + 16)
+      return max
     }
     if (selectedCity === 'phoenix' && phoenixCallsForServiceMaxDate instanceof Date) {
       // Never cap the calendar *before today* due to Calls for Service.
@@ -131,6 +142,32 @@ export default function NavLeft() {
     selectedCity === 'phoenix' &&
     !!phoenixHeatIllnessesVisible &&
     String(phoenixHeatIllnessesTimeMode || 'current') === 'current'
+
+  const showTemperatureCalendarAnnotations =
+    selectedCity === 'phoenix' &&
+    !!phoenixTemperatureNeighborhoodsVisible
+
+  const showAnnotatedCalendar =
+    showHeatIllnessCalendarAnnotations || showTemperatureCalendarAnnotations
+
+  // Temperature data window (matches Temperature layer in MapView).
+  const TEMP_MIN_DATE = new Date('2024-01-01T00:00:00')
+
+  const classifyTemperatureDate = (date) => {
+    if (!(date instanceof Date) || Number.isNaN(date.getTime())) return null
+    const now = new Date()
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0)
+    const d0 = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0)
+    if (d0.getTime() < TEMP_MIN_DATE.getTime()) return 'no-data'
+    const cmp = d0.getTime() - today.getTime()
+    if (cmp === 0) return 'present'
+    if (cmp > 0) {
+      const max = new Date(today)
+      max.setDate(max.getDate() + 16)
+      return d0.getTime() <= max.getTime() ? 'forecast' : 'no-data'
+    }
+    return 'historical'
+  }
 
   const controlStyle = {
     color: 'var(--color-gray-100)',
@@ -213,7 +250,7 @@ export default function NavLeft() {
               fromYear={minSelectableDate.getFullYear()}
               toYear={maxSelectableDate.getFullYear()}
               disabled={{ before: minSelectableDate, after: maxSelectableDate }}
-              className={`text-[var(--color-gray-100)] ${showHeatIllnessCalendarAnnotations ? '[--cell-size:48px]' : '[--cell-size:32px]'}`}
+              className={`text-[var(--color-gray-100)] ${showAnnotatedCalendar ? '[--cell-size:48px]' : '[--cell-size:32px]'}`}
               classNames={{
                 months: 'flex flex-col',
                 month: 'space-y-2',
@@ -240,14 +277,17 @@ export default function NavLeft() {
               formatters={{
                 formatMonthDropdown: (date) => date.toLocaleString('default', { month: 'short' }),
               }}
-              components={showHeatIllnessCalendarAnnotations ? {
+              components={showAnnotatedCalendar ? {
                 DayButton: ({ day, modifiers, className, children, ...buttonProps }) => {
-                  const cls = classifyHeatIllnessDate(day?.date)
+                  const cls = showHeatIllnessCalendarAnnotations
+                    ? classifyHeatIllnessDate(day?.date)
+                    : classifyTemperatureDate(day?.date)
+
                   const labelText =
-                    cls === 'present' ? 'Present' :
-                    cls === 'historical' ? 'Historical' :
-                    cls === 'forecast' ? 'Forecast' :
-                    cls === 'no-data' ? 'No data' : null
+                    cls === 'present' ? 'P' :
+                    cls === 'historical' ? 'H' :
+                    cls === 'forecast' ? 'F' :
+                    null
 
                   const labelColor =
                     cls === 'present' ? 'var(--sand-teal)' :

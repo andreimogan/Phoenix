@@ -1,4 +1,5 @@
 import { usePanelContext } from '../contexts/PanelContext'
+import DraggableFloatingPanel from './DraggableFloatingPanel'
 
 /** Matches MapLibre paints in MapView.jsx for choropleths / homelessness points */
 
@@ -56,11 +57,11 @@ function discreteGradientCss(entries) {
 function Section({ title, children, description }) {
   return (
     <div className="border-t first:border-t-0 first:pt-0 pt-3 mt-3 first:mt-0" style={{ borderColor: 'var(--color-gray-700)' }}>
-      <div className="text-[10px] font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--color-gray-400)' }}>
+      <div className="text-[9px] font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--color-gray-400)' }}>
         {title}
       </div>
       {description ? (
-        <div className="text-[11px] leading-snug mb-2" style={{ color: 'var(--color-gray-500)' }}>
+        <div className="text-[10px] leading-snug mb-2" style={{ color: 'var(--color-gray-500)' }}>
           {description}
         </div>
       ) : null}
@@ -132,8 +133,6 @@ export default function HeatHomelessnessLegend() {
     return null
   }
 
-  const outer = { position: 'fixed', left: 'calc(16px + 48px + 16px)', bottom: 24, zIndex: 50, pointerEvents: 'none' }
-
   const homelessnessView = String(callsForServiceStyle || 'default')
   const homelessViewExplanation =
     homelessnessView === 'heatmap'
@@ -143,24 +142,28 @@ export default function HeatHomelessnessLegend() {
         : 'Markers use colors by service category below.'
 
   return (
-    <div style={outer}>
-    <div
-      className="pointer-events-none rounded-lg border shadow-xl overflow-hidden max-h-[72vh] overflow-y-auto"
-      style={{
-        backgroundColor: 'var(--sand-surface)',
-        borderColor: 'var(--color-gray-700)',
-        color: 'var(--color-gray-100)',
-      }}
-      role="region"
-      aria-label="Heat and homelessness map legend"
+    <DraggableFloatingPanel
+      storageKey="phoenix:legend:heat-homelessness"
+      defaultPosition={{ x: 80, y: 520 }}
+      zIndex={50}
     >
-      <div className="px-3 py-2 border-b sticky top-0" style={{ backgroundColor: 'var(--sand-surface)', borderColor: 'var(--color-gray-700)' }}>
-        <span className="text-[11px] font-semibold" style={{ color: 'var(--color-gray-200)' }}>
+      <div
+        className="rounded-lg border shadow-xl overflow-hidden max-h-[72vh] overflow-y-auto"
+        style={{
+          backgroundColor: 'var(--sand-surface)',
+          borderColor: 'var(--color-gray-700)',
+          color: 'var(--color-gray-100)',
+        }}
+        role="region"
+        aria-label="Heat and homelessness map legend"
+      >
+      <div className="px-2 py-1.5 border-b sticky top-0" style={{ backgroundColor: 'var(--sand-surface)', borderColor: 'var(--color-gray-700)' }}>
+        <span className="text-[10px] font-semibold" style={{ color: 'var(--color-gray-200)' }}>
           Legend
         </span>
       </div>
 
-      <div className="px-3 py-3 space-y-0">
+      <div className="px-2.5 py-2.5 space-y-0">
         {showHeatIllness ? (
           <Section title="Heat Illnesses">
             <RagTwoRowLegend
@@ -216,7 +219,7 @@ export default function HeatHomelessnessLegend() {
         ) : null}
 
         {showHomelessPoints ? (
-          <Section title="Homelessness services" description={homelessViewExplanation}>
+          <Section title="Homelessness services">
             <div className="space-y-1.5">
               {HOMELESSNESS_CATEGORIES.map(({ label, color }) => {
                 const enabled = phoenixHomelessnessCategoryEnabled?.[label] !== false
@@ -225,8 +228,8 @@ export default function HeatHomelessnessLegend() {
                     <span
                       className="shrink-0 rounded-full"
                       style={{
-                        width: 10,
-                        height: 10,
+                        width: 8,
+                        height: 8,
                         backgroundColor: color,
                         opacity: enabled ? 1 : 0.35,
                         boxShadow: '0 0 0 1px rgba(255,255,255,0.2)',
@@ -234,7 +237,7 @@ export default function HeatHomelessnessLegend() {
                       aria-hidden
                     />
                     <span
-                      className="text-[12px] font-medium"
+                      className="text-[11px] font-medium"
                       style={{
                         color: enabled ? 'var(--color-gray-200)' : 'var(--color-gray-500)',
                         textDecoration: enabled ? undefined : 'line-through',
@@ -251,8 +254,7 @@ export default function HeatHomelessnessLegend() {
 
         {showHomelessNeighborRag ? (
           <Section
-            title="Homelessness burden (selected neighborhoods)"
-            description="Affected village polygons counted from visible service markers (respects categories toggled above). Larger totals read warmer."
+            title="Homelessness burden"
           >
             <RagTwoRowLegend
               noDataColor={HOMELESSNESS_NEIGHBORHOOD_RAG.gradient[0][1]}
@@ -261,7 +263,7 @@ export default function HeatHomelessnessLegend() {
           </Section>
         ) : null}
       </div>
-    </div>
-    </div>
+      </div>
+    </DraggableFloatingPanel>
   )
 }

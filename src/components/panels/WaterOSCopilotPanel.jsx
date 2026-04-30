@@ -24,11 +24,18 @@ import {
   Users,
   Check,
   PenLine,
+  Thermometer,
+  TrendingUp,
+  CalendarDays,
+  Shield,
 } from 'lucide-react'
 import { usePanelContext } from '../../contexts/PanelContext'
 import { useDraggable } from '../../hooks/useDraggable'
 
+const HEATWAVE_QUESTION = 'When would be the next heatwave based on historical and forecasting data?'
+
 const questions = [
+  { icon: Thermometer, text: HEATWAVE_QUESTION, isHeatwave: true },
   { icon: Sun, text: 'Morning Briefing' },
   { icon: Zap, text: 'How does burst detection work without dense sensors?' },
   { icon: Activity, text: 'What are the four burst signature types?' },
@@ -37,6 +44,32 @@ const questions = [
   { icon: ChartColumn, text: 'What improves detection when more sensors are added?' },
   { icon: ShieldCheck, text: 'How does gradual pressure decay signal a growing leak?' },
 ]
+
+const HEATWAVE_ANALYSIS_RESPONSE = {
+  prediction: {
+    window: 'June 8 – 14, 2026',
+    peakDates: 'June 11 – 12',
+    peakTempF: 114,
+    consecutiveDays: 7,
+    topDistricts: ['District 7', 'District 8', 'District 5'],
+  },
+  confidence: {
+    overall: 74,
+    label: 'Moderate–High',
+    breakdown: [
+      { factor: 'Historical seasonal pattern match', value: 92, note: 'Phoenix June heat events 2020–2025: 100% occurrence rate' },
+      { factor: '16-day forecast signal', value: 68, note: 'Current temps trending +3.2°F above seasonal baseline' },
+      { factor: 'Monsoon onset uncertainty', value: 55, note: 'Pre-monsoon events are more predictable; variability increases after July 1' },
+    ],
+  },
+  preparation: [
+    { icon: 'cooling', action: 'Extend cooling center hours to 7am–10pm', deadline: 'By June 5', priority: 'critical' },
+    { icon: 'ems', action: 'Pre-stage EMS units in Districts 7, 8 & 5', deadline: 'By June 7', priority: 'high' },
+    { icon: 'comms', action: 'Issue public heat advisory (3-day lead)', deadline: 'By June 6', priority: 'high' },
+    { icon: 'outreach', action: 'Deploy outreach teams for unsheltered residents in high-risk districts', deadline: 'By June 7', priority: 'high' },
+    { icon: 'hospital', action: 'Alert hospitals to prepare for above-baseline heat-illness admissions', deadline: 'By June 8', priority: 'moderate' },
+  ],
+}
 
 // Dynamic action prompts based on context count
 const getActionPrompts = (contextCount) => {
@@ -379,6 +412,28 @@ export default function WaterOSCopilotPanel() {
     await sendUserMessage(inputText)
     setInputText('')
   }
+
+  // Handle suggested question chip clicks
+  const handleQuestionChipClick = (question) => {
+    if (question.isHeatwave) {
+      // Switch to chat tab and inject hardcoded heatwave conversation
+      setActiveTab('chat')
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: `heatwave-q-${Date.now()}`,
+          type: 'user-message',
+          message: HEATWAVE_QUESTION,
+        },
+        {
+          id: `heatwave-a-${Date.now() + 1}`,
+          type: 'heatwave-analysis',
+          data: HEATWAVE_ANALYSIS_RESPONSE,
+        },
+      ])
+    }
+    // Other questions can be extended here in future
+  }
   
   // Handle Enter key to send message
   const handleKeyDown = (e) => {
@@ -536,14 +591,30 @@ export default function WaterOSCopilotPanel() {
             <div className="flex-1 overflow-y-auto px-3 py-2 space-y-3">
               {chatMessages.length === 0 ? (
                 /* Empty state */
-                <div className="flex flex-col items-center justify-center h-full text-center">
-                  <MessageSquare className="w-12 h-12 mb-3" style={{ color: 'var(--color-gray-600)' }} />
-                  <p className="font-semibold" style={{ fontSize: 'var(--text-sm)', color: 'var(--color-gray-300)' }}>
-                    No conversations yet
-                  </p>
-                  <p className="mt-1" style={{ fontSize: 'var(--text-xs)', color: 'var(--color-gray-400)' }}>
-                    Send event context from the Event Affected Area panel to start
-                  </p>
+                <div className="flex flex-col items-center justify-center h-full text-center gap-4">
+                  <div>
+                    <MessageSquare className="w-12 h-12 mb-3 mx-auto" style={{ color: 'var(--color-gray-600)' }} />
+                    <p className="font-semibold" style={{ fontSize: 'var(--text-sm)', color: 'var(--color-gray-300)' }}>
+                      No conversations yet
+                    </p>
+                    <p className="mt-1" style={{ fontSize: 'var(--text-xs)', color: 'var(--color-gray-400)' }}>
+                      Send event context from the Event Affected Area panel to start
+                    </p>
+                  </div>
+                  {/* Suggested heat question */}
+                  <div className="w-full px-2">
+                    <p className="text-[10px] uppercase tracking-wide mb-1.5 text-center" style={{ color: 'var(--color-gray-500)' }}>Suggested question</p>
+                    <button
+                      onClick={() => handleQuestionChipClick({ isHeatwave: true })}
+                      className="w-full flex items-start gap-2.5 px-3 py-2.5 rounded-lg border text-left transition-all"
+                      style={{ fontSize: 'var(--text-xs)', backgroundColor: 'rgba(251,146,60,0.08)', borderColor: 'rgba(251,146,60,0.40)', color: 'rgba(253,186,116,0.90)' }}
+                      onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(251,146,60,0.15)'; e.currentTarget.style.borderColor = 'rgba(251,146,60,0.65)'; e.currentTarget.style.color = '#fff' }}
+                      onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'rgba(251,146,60,0.08)'; e.currentTarget.style.borderColor = 'rgba(251,146,60,0.40)'; e.currentTarget.style.color = 'rgba(253,186,116,0.90)' }}
+                    >
+                      <Thermometer className="w-3.5 h-3.5 mt-0.5 shrink-0" style={{ color: '#fb923c' }} aria-hidden="true" />
+                      <span className="leading-relaxed">{HEATWAVE_QUESTION}</span>
+                    </button>
+                  </div>
                 </div>
               ) : contextCount <= 1 ? (
                 /* Single context - vertical full card */
@@ -561,6 +632,77 @@ export default function WaterOSCopilotPanel() {
                           >
                             <p style={{ fontSize: 'var(--text-sm)', lineHeight: '1.5' }}>
                               {message.message}
+                            </p>
+                          </div>
+                        </div>
+                      ) : message.type === 'heatwave-analysis' ? (
+                        /* Heatwave Analysis card */
+                        <div className="flex items-start gap-2 mb-3">
+                          <div className="w-7 h-7 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: '#fb923c' }}>
+                            <Thermometer className="w-4 h-4 text-white" />
+                          </div>
+                          <div className="flex-1 flex flex-col gap-2.5">
+                            {/* Header */}
+                            <div className="rounded-lg px-3 py-2.5" style={{ backgroundColor: 'rgba(251,146,60,0.08)', border: '1px solid rgba(251,146,60,0.30)' }}>
+                              <p className="text-[11px] font-bold tracking-widest uppercase mb-1" style={{ color: '#fb923c' }}>Heat Intelligence</p>
+                              <p className="text-[13px] font-semibold" style={{ color: 'rgba(255,255,255,0.92)' }}>
+                                Next predicted heatwave: <span style={{ color: '#fdba74' }}>{message.data.prediction.window}</span>
+                              </p>
+                              <p className="text-[11px] mt-1" style={{ color: 'rgba(255,255,255,0.55)' }}>
+                                Peak {message.data.prediction.peakTempF}°F on {message.data.prediction.peakDates} · {message.data.prediction.consecutiveDays}+ consecutive days · Highest risk: {message.data.prediction.topDistricts.join(', ')}
+                              </p>
+                            </div>
+
+                            {/* Confidence */}
+                            <div className="rounded-lg px-3 py-2.5" style={{ backgroundColor: 'var(--color-gray-700)', border: '1px solid var(--color-gray-600)' }}>
+                              <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center gap-1.5">
+                                  <TrendingUp className="w-3.5 h-3.5" style={{ color: '#facc15' }} />
+                                  <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color: 'rgba(255,255,255,0.50)' }}>Forecast Accuracy</span>
+                                </div>
+                                <span className="text-[13px] font-bold" style={{ color: '#facc15' }}>{message.data.confidence.overall}% · {message.data.confidence.label}</span>
+                              </div>
+                              {/* Confidence bar */}
+                              <div className="rounded-full h-1.5 mb-2.5" style={{ backgroundColor: 'rgba(255,255,255,0.08)' }}>
+                                <div className="h-full rounded-full transition-all" style={{ width: `${message.data.confidence.overall}%`, background: 'linear-gradient(90deg,#fb923c,#facc15)' }} />
+                              </div>
+                              <div className="flex flex-col gap-1.5">
+                                {message.data.confidence.breakdown.map((item, idx) => (
+                                  <div key={idx}>
+                                    <div className="flex items-center justify-between mb-0.5">
+                                      <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.65)' }}>{item.factor}</span>
+                                      <span className="text-[11px] font-semibold" style={{ color: item.value >= 75 ? '#86efac' : item.value >= 55 ? '#fde047' : '#fca5a5' }}>{item.value}%</span>
+                                    </div>
+                                    <p className="text-[10px]" style={{ color: 'rgba(255,255,255,0.35)' }}>{item.note}</p>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+
+                            {/* Mayor prep */}
+                            <div className="rounded-lg px-3 py-2.5" style={{ backgroundColor: 'var(--color-gray-700)', border: '1px solid var(--color-gray-600)' }}>
+                              <div className="flex items-center gap-1.5 mb-2">
+                                <Shield className="w-3.5 h-3.5" style={{ color: 'var(--sand-teal)' }} />
+                                <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color: 'rgba(255,255,255,0.50)' }}>Mayor Preparation Checklist</span>
+                              </div>
+                              <div className="flex flex-col gap-1.5">
+                                {message.data.preparation.map((item, idx) => {
+                                  const priorityColor = item.priority === 'critical' ? '#f87171' : item.priority === 'high' ? '#fb923c' : '#facc15'
+                                  return (
+                                    <div key={idx} className="flex items-start gap-2 rounded-md px-2 py-1.5" style={{ backgroundColor: 'rgba(255,255,255,0.03)', border: `1px solid ${priorityColor}33` }}>
+                                      <CalendarDays className="w-3 h-3 mt-0.5 shrink-0" style={{ color: priorityColor }} />
+                                      <div className="flex-1 min-w-0">
+                                        <p className="text-[11px] leading-snug" style={{ color: 'rgba(255,255,255,0.82)' }}>{item.action}</p>
+                                        <p className="text-[10px] mt-0.5 font-medium" style={{ color: priorityColor }}>{item.deadline}</p>
+                                      </div>
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            </div>
+
+                            <p className="text-[10px] px-1" style={{ color: 'rgba(255,255,255,0.28)' }}>
+                              Based on Phoenix Heat Illness synthetic forecast data + Open-Meteo temperature signals. Not a certified meteorological forecast.
                             </p>
                           </div>
                         </div>
@@ -2201,28 +2343,29 @@ export default function WaterOSCopilotPanel() {
               </div>
             </div>
             <div className="space-y-1.5">
-              {questions.map(({ icon: Icon, text }, i) => (
+              {questions.map(({ icon: Icon, text, isHeatwave }, i) => (
                 <button
                   key={i}
+                  onClick={() => handleQuestionChipClick({ icon: Icon, text, isHeatwave })}
                   className="w-full flex items-start gap-2.5 px-3 py-2.5 rounded-lg border text-left transition-all group"
                   style={{
                     fontSize: 'var(--text-xs)',
-                    backgroundColor: 'rgba(55, 65, 81, 0.6)',
-                    borderColor: 'var(--color-gray-600)',
-                    color: 'var(--color-gray-300)',
+                    backgroundColor: isHeatwave ? 'rgba(251,146,60,0.08)' : 'rgba(55, 65, 81, 0.6)',
+                    borderColor: isHeatwave ? 'rgba(251,146,60,0.40)' : 'var(--color-gray-600)',
+                    color: isHeatwave ? 'rgba(253,186,116,0.90)' : 'var(--color-gray-300)',
                   }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.backgroundColor = 'var(--color-gray-700)'
-                    e.currentTarget.style.borderColor = 'var(--color-gray-500)'
-                    e.currentTarget.style.color = 'var(--color-gray-100)'
+                    e.currentTarget.style.backgroundColor = isHeatwave ? 'rgba(251,146,60,0.15)' : 'var(--color-gray-700)'
+                    e.currentTarget.style.borderColor = isHeatwave ? 'rgba(251,146,60,0.65)' : 'var(--color-gray-500)'
+                    e.currentTarget.style.color = isHeatwave ? '#fff' : 'var(--color-gray-100)'
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.backgroundColor = 'rgba(55, 65, 81, 0.6)'
-                    e.currentTarget.style.borderColor = 'var(--color-gray-600)'
-                    e.currentTarget.style.color = 'var(--color-gray-300)'
+                    e.currentTarget.style.backgroundColor = isHeatwave ? 'rgba(251,146,60,0.08)' : 'rgba(55, 65, 81, 0.6)'
+                    e.currentTarget.style.borderColor = isHeatwave ? 'rgba(251,146,60,0.40)' : 'var(--color-gray-600)'
+                    e.currentTarget.style.color = isHeatwave ? 'rgba(253,186,116,0.90)' : 'var(--color-gray-300)'
                   }}
                 >
-                  <span className="mt-0.5 shrink-0" style={{ color: 'var(--sand-teal)' }}>
+                  <span className="mt-0.5 shrink-0" style={{ color: isHeatwave ? '#fb923c' : 'var(--sand-teal)' }}>
                     <Icon className="w-3.5 h-3.5" aria-hidden="true" />
                   </span>
                   <span className="leading-relaxed">{text}</span>

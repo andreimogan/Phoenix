@@ -1,9 +1,9 @@
 import TopNav from './components/TopNav'
 import MapView from './components/MapView'
+import RiskMapView from './components/RiskMapView'
 import SuccessNotifications from './components/notifications/SuccessNotifications'
 import LeftNav from './components/LeftNav'
 import PerformancePage from './components/PerformancePage'
-import WorkOrdersPage from './components/WorkOrdersPage'
 import AlertsPanel from './components/AlertsPanel'
 import ForecastingPanel from './components/ForecastingPanel'
 import OverlayColumns from './components/OverlayColumns'
@@ -68,14 +68,17 @@ function AppContent() {
           </>
         )}
 
+        {/* City Risk & Resilience — forked map page (independent component instance). */}
+        {currentView === 'risk' && (
+          <>
+            <RiskMapView />
+            <OverlayColumns />
+          </>
+        )}
+
         {/* Performance Page */}
         {currentView === 'performance' && (
           <PerformancePage data={performanceData} />
-        )}
-
-        {/* Work Orders Page */}
-        {currentView === 'work-orders' && (
-          <WorkOrdersPage />
         )}
 
         {/* Common components */}

@@ -53,6 +53,12 @@ const baltimoreCategories = [
 /** Phoenix: same panel structure as Baltimore, but no live data or map wiring yet */
 const phoenixCategories = [
   {
+    id: 'phoenix-situational-awareness',
+    name: 'Situational Awareness View',
+    isPhoenixSituationalAwareness: true,
+    layers: [],
+  },
+  {
     id: 'calls',
     name: 'Calls for Service',
     layers: [],
@@ -131,6 +137,12 @@ export default function ManageMapLayersPanel() {
     startCallsForServiceGeocoding,
     phoenixActiveMasterLayer,
     setPhoenixActiveMasterLayer,
+    phoenixSituationalAwareness,
+    setPhoenixSituationalHeat,
+    setPhoenixSituational311,
+    setPhoenixSituationalHousing,
+    setPhoenixSituationalEcon,
+    togglePhoenixSituationalMaster,
     selectedCity,
     selectedYear,
     selectedDate,
@@ -1179,6 +1191,33 @@ export default function ManageMapLayersPanel() {
                   </div>
                 )}
 
+                {/* Right: Situational Awareness master toggle (additive overlay) */}
+                {category.isPhoenixSituationalAwareness && selectedCity === 'phoenix' && (
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={!!phoenixSituationalAwareness?.master}
+                      aria-label="Toggle Situational Awareness View"
+                      className="relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
+                      style={{
+                        backgroundColor: phoenixSituationalAwareness?.master ? '#22d3ee' : 'rgba(255,255,255,0.10)',
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        togglePhoenixSituationalMaster()
+                      }}
+                    >
+                      <span
+                        className="pointer-events-none inline-block h-3 w-3 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out"
+                        style={{
+                          transform: phoenixSituationalAwareness?.master ? 'translateX(12px)' : 'translateX(0)',
+                        }}
+                      />
+                    </button>
+                  </div>
+                )}
+
                 {/* Right: Phoenix master layer toggle (Calls / Heat & Homelessness — mutually exclusive) */}
                 {selectedCity === 'phoenix' && (category.id === 'calls' || category.id === 'heat-homelessness') && (
                   <div className="flex items-center gap-2 shrink-0">
@@ -1210,8 +1249,56 @@ export default function ManageMapLayersPanel() {
 
               </div>
 
-              {expandedCategories[category.id] && (category.layers.length > 0 || category.id === 'calls' || category.id === 'phoenix-neighborhood-boundaries' || category.id === 'phoenix-council-district-boundaries') && (
+              {expandedCategories[category.id] && (category.layers.length > 0 || category.id === 'calls' || category.id === 'phoenix-neighborhood-boundaries' || category.id === 'phoenix-council-district-boundaries' || category.isPhoenixSituationalAwareness) && (
                 <div className="space-y-1.5 mt-2 ml-4">
+                  {category.isPhoenixSituationalAwareness && selectedCity === 'phoenix' && (() => {
+                    const sa = phoenixSituationalAwareness || {}
+                    const subRows = [
+                      { key: 'heat',     label: 'Top 2 — Heat (forecast 16d)',  on: !!sa.heat,     setter: setPhoenixSituationalHeat,    accent: '#fb923c' },
+                      { key: 'calls311', label: 'Top 1 — 311 (last 30d)',       on: !!sa.calls311, setter: setPhoenixSituational311,     accent: '#3b82f6' },
+                      { key: 'housing',  label: 'Top 1 — Housing affordability', on: !!sa.housing,  setter: setPhoenixSituationalHousing, accent: '#a78bfa' },
+                      { key: 'econ',     label: 'Top 1 — Biz openings (90d)',    on: !!sa.econ,     setter: setPhoenixSituationalEcon,    accent: '#34d399' },
+                    ]
+                    const masterOff = !sa.master
+                    return (
+                      <div className="space-y-1.5">
+                        {subRows.map((row) => (
+                          <div
+                            key={row.key}
+                            className="rounded-md border transition-colors px-2 py-1.5 flex items-center justify-between gap-2"
+                            style={{
+                              borderColor: row.on && !masterOff ? `${row.accent}55` : 'var(--color-gray-700)',
+                              backgroundColor: row.on && !masterOff ? `${row.accent}14` : 'transparent',
+                              opacity: masterOff ? 0.55 : 1,
+                            }}
+                          >
+                            <span className="text-[11px] font-medium leading-tight truncate" style={{ color: 'var(--color-gray-200)' }}>
+                              {row.label}
+                            </span>
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={row.on}
+                              aria-label={`Toggle ${row.label}`}
+                              disabled={masterOff}
+                              className="relative inline-flex h-4 w-8 shrink-0 cursor-pointer items-center rounded-full transition-colors disabled:cursor-not-allowed"
+                              style={{ backgroundColor: row.on && !masterOff ? row.accent : 'var(--color-gray-400)' }}
+                              onClick={() => row.setter(!row.on)}
+                            >
+                              <span
+                                className="pointer-events-none absolute left-0.5 top-0.5 h-3 w-3 rounded-full bg-white shadow transition-transform"
+                                style={{ transform: row.on ? 'translateX(14px)' : 'translateX(0)' }}
+                              />
+                            </button>
+                          </div>
+                        ))}
+                        <p className="text-[10px] leading-snug" style={{ color: 'var(--color-gray-500)' }}>
+                          Highlights stack on the same district when categories overlap. Heat uses live forecast data; 311 / Housing / Biz are placeholders.
+                        </p>
+                      </div>
+                    )
+                  })()}
+
                   {/* Calls for Service (Phoenix) */}
                   {category.id === 'calls' && selectedCity === 'phoenix' && (
                     <>
@@ -2156,7 +2243,7 @@ export default function ManageMapLayersPanel() {
                                   Show districts
                                 </div>
                                 <div className="text-[10px] mt-0.5" style={{ color: 'var(--color-gray-500)' }}>
-                                  Colors villages by homelessness severity
+                                  Colors districts by homelessness severity
                                 </div>
                               </div>
                               <button

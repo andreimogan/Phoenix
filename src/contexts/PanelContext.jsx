@@ -30,35 +30,127 @@ export const usePanelContext = () => {
   return context
 }
 
+// Per-view defaults for the right-side windows menu.
+// Each view (map / risk) carries its own visibility, order, and collapsed slices,
+// so toggling a window in one view never bleeds into the other.
+const DEFAULT_VIEW_WINDOWS = {
+  map: {
+    weather: false,
+    kpiCards: true,
+    heatRelief: false,
+    latest311: false,
+    intervention: false,
+    briefingRoom: true,
+  },
+  risk: {
+    weather: false,
+    kpiCards: false,
+    heatRelief: true,
+    latest311: false,
+    intervention: false,
+    briefingRoom: true,
+  },
+}
+
+const FALLBACK_VIEW_WINDOWS = DEFAULT_VIEW_WINDOWS.map
+
+const DEFAULT_VIEW_ORDER = {
+  map: ['briefingRoom'],
+  risk: ['briefingRoom'],
+}
+
+const DEFAULT_VIEW_COLLAPSED = {
+  map: { weather: false, latest311: false, intervention: false, briefingRoom: false },
+  risk: { weather: false, latest311: false, intervention: false, briefingRoom: false },
+}
+
+// Phoenix master map-layer (Calls / Heat & Homelessness / null) — PER VIEW.
+// Map view starts with no master layer active; Risk view starts on heat-homelessness.
+const DEFAULT_VIEW_MASTER_LAYER = {
+  map: null,
+  risk: 'heat-homelessness',
+}
+
+// Phoenix Heat Illnesses sub-layer — PER VIEW. Risk view defaults the
+// "Heat" accordion on (heat illnesses visible); Map starts with it off.
+// (The master cascade still wipes layer state on master changes; forking the
+//  layer slot keeps the risk-view default intact when the cascade fires for
+//  map-view switches.)
+const DEFAULT_VIEW_HEAT_ILLNESSES = {
+  map: false,
+  risk: true,
+}
+
+// Phoenix "Situational Awareness View" map layer group — PER VIEW.
+// Map view boots with master + all 4 sub-layers on; Risk view boots all-off.
+// Sub-layers are additive overlays (independent of phoenixActiveMasterLayer).
+const DEFAULT_VIEW_SITUATIONAL = {
+  map:  { master: true,  heat: true,  calls311: true,  housing: true,  econ: true },
+  risk: { master: false, heat: false, calls311: false, housing: false, econ: false },
+}
+const SITUATIONAL_SUB_KEYS = ['heat', 'calls311', 'housing', 'econ']
+
 export const PanelProvider = ({ children }) => {
   // Panel visibility
   const [copilotVisible, setCopilotVisible] = useState(false)
   const [layersVisible, setLayersVisible] = useState(false)
 
-  // Floating windows (right side)
-  const [phoenixWeatherWindowVisible, setPhoenixWeatherWindowVisible] = useState(false)
-  const [phoenixLatest311WindowVisible, setPhoenixLatest311WindowVisible] = useState(false)
-  const [phoenixInterventionWindowVisible, setPhoenixInterventionWindowVisible] = useState(false)
-  const [phoenixBriefingRoomVisible, setPhoenixBriefingRoomVisible] = useState(true)
-  const [kpiCardsVisible, setKpiCardsVisible] = useState(false)
-  const [heatReliefKpiCardsVisible, setHeatReliefKpiCardsVisible] = useState(true)
+  // Navigation state — declared early so window state can be sliced by currentView.
+  const [currentView, setCurrentView] = useState('map') // 'map' | 'performance' | 'risk' | 'economic' | 'capital'
+  const [mapFocusRequest, setMapFocusRequest] = useState(null)
+  const [mapPopupRequest, setMapPopupRequest] = useState(null)
 
-  // Right-side windows order (based on enable sequence)
-  // Allowed ids: 'weather' | 'latest311' | 'intervention' | 'briefingRoom'
-  const [rightWindowsOrder, setRightWindowsOrder] = useState(() => ['briefingRoom'])
+  // Floating right-side windows — PER VIEW (map vs risk are independent).
+  const [viewWindows, setViewWindows] = useState(DEFAULT_VIEW_WINDOWS)
+  const [viewWindowsOrder, setViewWindowsOrder] = useState(DEFAULT_VIEW_ORDER)
+  const [viewWindowsCollapsed, setViewWindowsCollapsed] = useState(DEFAULT_VIEW_COLLAPSED)
 
-  // Right-side windows collapsed state (minimized)
-  const [rightWindowsCollapsed, setRightWindowsCollapsed] = useState({
-    weather: false,
-    latest311: false,
-    intervention: false,
-    briefingRoom: false,
-  })
+  const activeWindows = viewWindows[currentView] ?? FALLBACK_VIEW_WINDOWS
+  const phoenixWeatherWindowVisible = !!activeWindows.weather
+  const phoenixLatest311WindowVisible = !!activeWindows.latest311
+  const phoenixInterventionWindowVisible = !!activeWindows.intervention
+  const phoenixBriefingRoomVisible = !!activeWindows.briefingRoom
+  const kpiCardsVisible = !!activeWindows.kpiCards
+  const heatReliefKpiCardsVisible = !!activeWindows.heatRelief
+
+  const rightWindowsOrder = viewWindowsOrder[currentView] ?? []
+  const rightWindowsCollapsed = viewWindowsCollapsed[currentView] ?? {}
+
+  // Setter helper: writes to the current view's slot only.
+  const updateActiveWindow = (key, next) => {
+    setViewWindows((prev) => {
+      const view = currentView
+      const cur = prev[view] ?? FALLBACK_VIEW_WINDOWS
+      const nextValue = typeof next === 'function' ? !!next(!!cur[key]) : !!next
+      if (!!cur[key] === nextValue) return prev
+      return { ...prev, [view]: { ...cur, [key]: nextValue } }
+    })
+  }
+
+  const setPhoenixWeatherWindowVisible = (next) => updateActiveWindow('weather', next)
+  const setPhoenixLatest311WindowVisible = (next) => updateActiveWindow('latest311', next)
+  const setPhoenixInterventionWindowVisible = (next) => updateActiveWindow('intervention', next)
+  const setPhoenixBriefingRoomVisible = (next) => updateActiveWindow('briefingRoom', next)
+  const setKpiCardsVisible = (next) => updateActiveWindow('kpiCards', next)
+  const setHeatReliefKpiCardsVisible = (next) => updateActiveWindow('heatRelief', next)
+
+  const setRightWindowsOrder = (next) => {
+    setViewWindowsOrder((prev) => {
+      const view = currentView
+      const cur = prev[view] ?? []
+      const nextValue = typeof next === 'function' ? next(cur) : next
+      return { ...prev, [view]: nextValue }
+    })
+  }
 
   const toggleRightWindowCollapsed = (id) => {
     const key = String(id || '')
     if (!key) return
-    setRightWindowsCollapsed((prev) => ({ ...(prev || {}), [key]: !prev?.[key] }))
+    setViewWindowsCollapsed((prev) => {
+      const view = currentView
+      const cur = prev[view] ?? {}
+      return { ...prev, [view]: { ...cur, [key]: !cur[key] } }
+    })
   }
 
   const toggleRightWindow = (id) => {
@@ -92,7 +184,7 @@ export const PanelProvider = ({ children }) => {
     })
   }
 
-  // Bootstrap order if visibility changes outside the menu.
+  // Bootstrap order for the active view if its visibility changes outside the menu.
   useEffect(() => {
     setRightWindowsOrder((prev) => {
       const current = Array.isArray(prev) ? prev : []
@@ -102,22 +194,17 @@ export const PanelProvider = ({ children }) => {
       if (phoenixInterventionWindowVisible) visibleKeys.push('intervention')
       if (phoenixBriefingRoomVisible) visibleKeys.push('briefingRoom')
 
-      // Preserve existing order for keys that are still visible, then append any new visible keys.
       const kept = current.filter((k) => visibleKeys.includes(k))
       const missing = visibleKeys.filter((k) => !kept.includes(k))
       return [...kept, ...missing]
     })
   }, [
+    currentView,
     phoenixWeatherWindowVisible,
     phoenixLatest311WindowVisible,
     phoenixInterventionWindowVisible,
     phoenixBriefingRoomVisible,
   ])
-
-  // Navigation state
-  const [currentView, setCurrentView] = useState('map') // 'map' | 'performance' | 'work-orders' | 'risk' | 'economic' | 'capital'
-  const [mapFocusRequest, setMapFocusRequest] = useState(null)
-  const [mapPopupRequest, setMapPopupRequest] = useState(null)
 
   // Copilot / AI chat state
   const [activeTab, setActiveTab] = useState('chat')
@@ -215,7 +302,54 @@ export const PanelProvider = ({ children }) => {
   const [phoenixHeatDeathsVisible, setPhoenixHeatDeathsVisible] = useState(false)
   const [phoenixHeatDeathsLabelsVisible, setPhoenixHeatDeathsLabelsVisible] = useState(false)
 
-  const [phoenixHeatIllnessesVisible, setPhoenixHeatIllnessesVisible] = useState(true)
+  // Per-view Heat Illnesses visibility (see DEFAULT_VIEW_HEAT_ILLNESSES).
+  const [viewHeatIllnesses, setViewHeatIllnesses] = useState(DEFAULT_VIEW_HEAT_ILLNESSES)
+  const phoenixHeatIllnessesVisible = !!viewHeatIllnesses[currentView]
+  const setPhoenixHeatIllnessesVisible = (next) => {
+    setViewHeatIllnesses((prev) => {
+      const view = currentView
+      const cur = !!prev[view]
+      const nextValue = typeof next === 'function' ? !!next(cur) : !!next
+      if (cur === nextValue) return prev
+      return { ...prev, [view]: nextValue }
+    })
+  }
+
+  // Per-view Situational Awareness View flags. `master` gates all sub-layers;
+  // toggling master off freezes (but does not erase) sub-layer state so the
+  // user can flip master back on and resume their previous selections.
+  const FALLBACK_SITUATIONAL = DEFAULT_VIEW_SITUATIONAL.map
+  const [viewSituational, setViewSituational] = useState(DEFAULT_VIEW_SITUATIONAL)
+  const phoenixSituationalAwareness = viewSituational[currentView] ?? FALLBACK_SITUATIONAL
+
+  const updateSituationalSlot = (key, next) => {
+    setViewSituational((prev) => {
+      const view = currentView
+      const cur = prev[view] ?? FALLBACK_SITUATIONAL
+      const curVal = !!cur[key]
+      const nextVal = typeof next === 'function' ? !!next(curVal) : !!next
+      if (curVal === nextVal) return prev
+      return { ...prev, [view]: { ...cur, [key]: nextVal } }
+    })
+  }
+  const setPhoenixSituationalMaster = (next) => updateSituationalSlot('master', next)
+  const setPhoenixSituationalHeat = (next) => updateSituationalSlot('heat', next)
+  const setPhoenixSituational311 = (next) => updateSituationalSlot('calls311', next)
+  const setPhoenixSituationalHousing = (next) => updateSituationalSlot('housing', next)
+  const setPhoenixSituationalEcon = (next) => updateSituationalSlot('econ', next)
+  // Toggle master and pull all sub-layers along with it (turning master on
+  // re-enables every sub-layer; turning it off disables all). Useful for the
+  // accordion master switch where users expect "all-or-nothing" behavior.
+  const togglePhoenixSituationalMaster = () => {
+    setViewSituational((prev) => {
+      const view = currentView
+      const cur = prev[view] ?? FALLBACK_SITUATIONAL
+      const nextMaster = !cur.master
+      const nextSlot = { ...cur, master: nextMaster }
+      for (const k of SITUATIONAL_SUB_KEYS) nextSlot[k] = nextMaster
+      return { ...prev, [view]: nextSlot }
+    })
+  }
   const [phoenixCoolingCentersVisible, setPhoenixCoolingCentersVisible] = useState(false)
   const [phoenixHeatIllnessesEnabled, setPhoenixHeatIllnessesEnabled] = useState({}) // { [Heat_Illness]: boolean }
   // Time mode for the Heat Illnesses choropleth.
@@ -231,9 +365,19 @@ export const PanelProvider = ({ children }) => {
   // Choropleth name labels on the map (district or village polygons for heat illnesses).
   const [phoenixHeatIllnessGeoLabelsVisible, setPhoenixHeatIllnessGeoLabelsVisible] = useState(true)
 
-  // Phoenix master map-layer selector — only one primary use-case at a time.
-  // 'calls' | 'heat-homelessness' | null
-  const [phoenixActiveMasterLayer, setPhoenixActiveMasterLayer] = useState('heat-homelessness')
+  // Phoenix master map-layer selector — PER VIEW so map and risk start with
+  // different defaults. Values: 'calls' | 'heat-homelessness' | null.
+  const [viewMasterLayer, setViewMasterLayer] = useState(DEFAULT_VIEW_MASTER_LAYER)
+  const phoenixActiveMasterLayer = viewMasterLayer[currentView] ?? null
+  const setPhoenixActiveMasterLayer = (next) => {
+    setViewMasterLayer((prev) => {
+      const view = currentView
+      const cur = prev[view] ?? null
+      const nextValue = typeof next === 'function' ? next(cur) : next
+      if (cur === nextValue) return prev
+      return { ...prev, [view]: nextValue }
+    })
+  }
 
   // Enforce Phoenix primary-layer exclusivity. Switching the master layer turns
   // off any visibilities belonging to the *other* group; setting it to null
@@ -1098,6 +1242,14 @@ export const PanelProvider = ({ children }) => {
     // Phoenix master layer (mutually exclusive primary use-case)
     phoenixActiveMasterLayer,
     setPhoenixActiveMasterLayer,
+    // Situational Awareness View (additive overlay set, per-view defaults).
+    phoenixSituationalAwareness,
+    setPhoenixSituationalMaster,
+    setPhoenixSituationalHeat,
+    setPhoenixSituational311,
+    setPhoenixSituationalHousing,
+    setPhoenixSituationalEcon,
+    togglePhoenixSituationalMaster,
 
     heatmapConfig,
     setHeatmapConfig,

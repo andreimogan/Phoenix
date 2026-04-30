@@ -382,7 +382,10 @@ const get311ServiceUrl = (year, endDate = null) => {
 
 // Neighborhood boundary data: © City of St. Louis, provided by SLU OpenGIS (CC-BY-4.0)
 // https://github.com/slu-openGIS/STL_BOUNDARY_Nhood
-export default function MapView() {
+// NOTE: Forked from MapView.jsx so the City Risk & Resilience page can be
+// edited independently of the default Map View without conditional spaghetti.
+// Keep this component standalone (do not import MapView here).
+export default function RiskMapView() {
   const { 
     selectedCity,
     mapLibreColors,
@@ -611,7 +614,6 @@ export default function MapView() {
         createZoomPercentControl({ minZoom: 8, maxZoom: 18, maxPercent: 200 }),
         'bottom-right'
       )
-
 
       map.current.on('load', () => {
       // Find first symbol layer in the style (for proper layer ordering)
@@ -1412,8 +1414,6 @@ export default function MapView() {
       })
 
       // Situational Awareness View highlight layers (heat / 311 / housing / econ).
-      // Idempotent — this util adds 4 source+fill+line+label bundles on top of
-      // every other choropleth so highlights stay readable when stacked.
       ensurePhoenixSituationalLayers(map.current)
 
       map.current.addLayer({
@@ -2948,11 +2948,7 @@ export default function MapView() {
   ])
 
   // Situational Awareness View — top-N district highlights (additive overlay).
-  // Reuses council districts geojson and dispatches to the shared util so the
-  // layer ordering and styling is identical between MapView and RiskMapView.
-  // We fetch the geojson here directly when neither context state nor the
-  // shared ref cache is hot, since the council-districts effect only runs when
-  // boundaries are toggled visible (which Map view does not do by default).
+  // Mirrors MapView so behavior stays in lock-step across the two map pages.
   const phoenixSituationalGeoTick = useRef(0)
   const [phoenixSituationalGeoReady, setPhoenixSituationalGeoReady] = useState(false)
   useEffect(() => {
@@ -2978,7 +2974,7 @@ export default function MapView() {
       .then((geojson) => {
         if (cancelled || tick !== phoenixSituationalGeoTick.current) return
         phoenixCouncilDistrictsCache.current = geojson
-        setPhoenixSituationalGeoReady((v) => !v) // trigger downstream consumers if needed
+        setPhoenixSituationalGeoReady((v) => !v)
         run(geojson)
       })
       .catch((err) => {
@@ -3544,7 +3540,7 @@ export default function MapView() {
     }
   }, [selectedCity, phoenixNeighborhoodBoundariesVisible, mapLoaded])
 
-  // Phoenix villages colored by homelessness counts (affected only)
+  // Phoenix council districts colored by homelessness counts (affected only)
   useEffect(() => {
     if (!map.current || !mapLoaded) return
     if (!map.current.getSource('phoenix-council-districts-homelessness')) return
@@ -3554,7 +3550,7 @@ export default function MapView() {
       if (map.current.getLayer(id)) map.current.setLayoutProperty(id, 'visibility', vis)
     }
 
-    // Keep the old village layers hidden (they are no longer used by this toggle).
+    // Keep the old village layers hidden (no longer used by this toggle).
     setVis('phoenix-villages-homelessness-fill', 'none')
     setVis('phoenix-villages-homelessness-border', 'none')
 
@@ -3583,10 +3579,8 @@ export default function MapView() {
         return
       }
 
-      // Precompute district polygons once for PIP.
       const districtsPrepared = buildPhoenixCouncilDistrictCfsPrecomputed(baseDistricts)
 
-      // Aggregate by district.
       const counts = new Map()
       const byCatCounts = new Map()
       for (const d of districtsPrepared) {

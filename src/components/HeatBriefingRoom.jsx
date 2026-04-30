@@ -1,5 +1,5 @@
-import { useMemo } from 'react'
-import { BookOpen } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { BookOpen, AlertTriangle, AlertCircle, Info, CheckCircle, ChevronDown } from 'lucide-react'
 import { buildHeatBriefing } from '../utils/buildHeatBriefing'
 
 function emphasizeBriefingText(text) {
@@ -39,14 +39,113 @@ function SectionTitle({ children }) {
   )
 }
 
+const PRIORITY_CONFIG = {
+  critical: {
+    border: 'rgba(239,68,68,0.55)',
+    bg: 'rgba(239,68,68,0.08)',
+    badge: 'rgba(239,68,68,0.18)',
+    badgeText: '#fca5a5',
+    accent: '#f87171',
+    label: 'CRITICAL',
+    Icon: AlertTriangle,
+  },
+  high: {
+    border: 'rgba(249,115,22,0.50)',
+    bg: 'rgba(249,115,22,0.07)',
+    badge: 'rgba(249,115,22,0.18)',
+    badgeText: '#fdba74',
+    accent: '#fb923c',
+    label: 'HIGH',
+    Icon: AlertCircle,
+  },
+  moderate: {
+    border: 'rgba(234,179,8,0.45)',
+    bg: 'rgba(234,179,8,0.06)',
+    badge: 'rgba(234,179,8,0.18)',
+    badgeText: '#fde047',
+    accent: '#facc15',
+    label: 'MODERATE',
+    Icon: Info,
+  },
+  standard: {
+    border: 'rgba(148,163,184,0.25)',
+    bg: 'rgba(255,255,255,0.03)',
+    badge: 'rgba(148,163,184,0.15)',
+    badgeText: 'rgba(255,255,255,0.50)',
+    accent: 'rgba(255,255,255,0.40)',
+    label: 'STANDARD',
+    Icon: CheckCircle,
+  },
+}
+
+function DecisionCard({ priority = 'standard', text }) {
+  const cfg = PRIORITY_CONFIG[priority] || PRIORITY_CONFIG.standard
+  const { Icon } = cfg
+  return (
+    <div
+      className="rounded-[8px] border px-3 py-2.5 flex flex-col gap-1.5"
+      style={{ borderColor: cfg.border, background: cfg.bg }}
+    >
+      <div className="flex items-center gap-1.5">
+        <Icon className="w-3 h-3 flex-shrink-0" style={{ color: cfg.accent }} aria-hidden="true" />
+        <span
+          className="text-[10px] font-bold tracking-widest uppercase"
+          style={{ color: cfg.badgeText }}
+        >
+          {cfg.label}
+        </span>
+      </div>
+      <p className="text-[12px] leading-snug" style={{ color: 'rgba(255,255,255,0.82)' }}>
+        {emphasizeBriefingText(text)}
+      </p>
+    </div>
+  )
+}
+
+function BulletItem({ text }) {
+  const [expanded, setExpanded] = useState(false)
+  return (
+    <button
+      type="button"
+      onClick={() => setExpanded((v) => !v)}
+      className="w-full text-left flex items-start gap-1.5 rounded-[6px] px-2 py-1.5 transition-colors"
+      style={{
+        background: expanded ? 'rgba(255,255,255,0.04)' : 'transparent',
+        cursor: 'pointer',
+      }}
+    >
+      <ChevronDown
+        className="w-3 h-3 mt-0.5 flex-shrink-0 transition-transform"
+        style={{
+          color: 'rgba(255,255,255,0.35)',
+          transform: expanded ? 'rotate(0deg)' : 'rotate(-90deg)',
+        }}
+        aria-hidden="true"
+      />
+      <span
+        className="text-[12px] leading-snug"
+        style={{
+          color: 'rgba(255,255,255,0.76)',
+          overflow: expanded ? 'visible' : 'hidden',
+          display: expanded ? 'block' : '-webkit-box',
+          WebkitLineClamp: expanded ? 'unset' : 1,
+          WebkitBoxOrient: 'vertical',
+        }}
+      >
+        {emphasizeBriefingText(text)}
+      </span>
+    </button>
+  )
+}
+
 function BulletList({ items }) {
   if (!items?.length) return null
   return (
-    <ul className="text-[12px] leading-snug list-disc pl-4" style={{ color: 'rgba(255,255,255,0.76)' }}>
+    <div className="flex flex-col gap-0.5">
       {items.map((t, i) => (
-        <li key={`${t}-${i}`}>{emphasizeBriefingText(t)}</li>
+        <BulletItem key={`${t}-${i}`} text={t} />
       ))}
-    </ul>
+    </div>
   )
 }
 
@@ -64,7 +163,7 @@ export default function HeatBriefingRoom({ input, title = 'Daily Heat Briefing' 
   const hasContent =
     !!briefing?.topLineSummaries?.length ||
     !!briefing?.keyDevelopments?.length ||
-    !!briefing?.decisionRecommendations?.length
+    !!briefing?.structuredRecommendations?.length
 
   return (
     <div className="flex flex-col gap-2">
@@ -106,12 +205,16 @@ export default function HeatBriefingRoom({ input, title = 'Daily Heat Briefing' 
             </div>
           </div>
 
-          <div className="flex flex-col gap-1.5">
-            <SectionTitle>Decision recommendations</SectionTitle>
-            <div className="rounded-[8px] border px-2.5 py-2" style={{ borderColor: 'rgba(255,255,255,0.07)', background: 'rgba(255,255,255,0.02)' }}>
-              <BulletList items={briefing.decisionRecommendations} />
+          {!!briefing.structuredRecommendations?.length && (
+            <div className="flex flex-col gap-1.5">
+              <SectionTitle>Decision recommendations</SectionTitle>
+              <div className="flex flex-col gap-1.5">
+                {briefing.structuredRecommendations.map((rec, i) => (
+                  <DecisionCard key={i} priority={rec.priority} text={rec.text} />
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </>
       )}
     </div>

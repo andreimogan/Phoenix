@@ -394,7 +394,7 @@ export default function WeatherAccordion() {
     setChatMessages((prev) => [...prev, planMessage])
   }
 
-  if (currentView === 'performance' || currentView === 'work-orders') return null
+  if (currentView === 'performance') return null
 
   return (
     <>

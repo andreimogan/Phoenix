@@ -7,6 +7,47 @@ import PerformanceDetailModal from './PerformanceDetailModal'
 import { generatePerformanceModalData } from '../utils/performanceAnalytics'
 import { LineChart, Line, ResponsiveContainer, Tooltip } from 'recharts'
 import { TrendingUp, TrendingDown } from 'lucide-react'
+import phoenixHeatIllnessesSyntheticDemo from '../data/phoenixHeatIllnessesSyntheticDemo.json'
+import { PHOENIX_SITUATIONAL_AWARENESS_FAKE } from '../data/phoenixSituationalAwarenessFakeData'
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000
+
+const formatCompactCount = (n) => {
+  if (!Number.isFinite(n) || n <= 0) return '—'
+  if (n >= 1000) return `~${(n / 1000).toFixed(1)}k`
+  return `~${Math.round(n)}`
+}
+
+// Sum FORECAST_2026 heat-illness Counts for weeks that overlap the
+// 30-day window starting at `asOfDate`. If no overlap (common when the
+// user is sitting on a 2024/2025 date), fall back to the earliest 4
+// forecast weeks so the metric is never blank.
+const computePhoenixHeatForecastNext30 = (asOfDate) => {
+  const heatRows = phoenixHeatIllnessesSyntheticDemo?.rows || []
+  const forecastsByWeek = new Map()
+  for (const r of heatRows) {
+    if (r?.Data_Type !== 'FORECAST_2026') continue
+    const ws = r?.Week_Start
+    if (!ws) continue
+    const ms = Date.parse(`${ws}T00:00:00Z`)
+    if (!Number.isFinite(ms)) continue
+    const count = Number(r.Count) || 0
+    forecastsByWeek.set(ms, (forecastsByWeek.get(ms) || 0) + count)
+  }
+  if (!forecastsByWeek.size) return 0
+
+  const sortedWeeks = [...forecastsByWeek.entries()].sort((a, b) => a[0] - b[0])
+
+  const start = asOfDate instanceof Date ? asOfDate.getTime() : Date.now()
+  const end = start + 30 * MS_PER_DAY
+  // A weekly bucket counts if any of its 7 days overlap the 30-day window.
+  const overlapping = sortedWeeks.filter(([wsMs]) => {
+    const weekEnd = wsMs + 6 * MS_PER_DAY
+    return weekEnd >= start && wsMs <= end
+  })
+  const window = overlapping.length ? overlapping : sortedWeeks.slice(0, 4)
+  return window.reduce((sum, [, count]) => sum + count, 0)
+}
 
 const badgeStyles = {
   red: {
@@ -72,6 +113,8 @@ export default function CityKPICards({ embedded = false }) {
     selectedDate, 
     selectedYear, 
     healthOverdoseData,
+    setCurrentView,
+    phoenixHomelessnessSnapshot,
   } = usePanelContext()
   const cards = cityKPIData[selectedCity] ?? cityKPIData.stl
   const trendCacheRef = useRef({})
@@ -244,6 +287,36 @@ export default function CityKPICards({ embedded = false }) {
         trendIndicator
       }
     }
+    // Phoenix District Economic Health — pin to Situational Awareness View
+    // "Top 1 — Biz openings (90d)" district pick so the card and map stay in
+    // lock-step.
+    if (selectedCity === 'phoenix' && card.id === 'economic') {
+      const econ = PHOENIX_SITUATIONAL_AWARENESS_FAKE.topEconBiz
+      if (econ && Number.isFinite(econ.percent)) {
+        return {
+          ...card,
+          metric: `+${econ.percent}%`,
+          metricSuffix: `biz openings · District ${econ.districtId}`,
+          description: 'leading Phoenix districts over the last 90 days',
+        }
+      }
+    }
+    // Phoenix Risk & Resilience — derived from heat forecast + homelessness snapshot.
+    if (selectedCity === 'phoenix' && card.id === 'risk' && card.metric === 'dynamic') {
+      const forecastCases = computePhoenixHeatForecastNext30(selectedDate)
+      const streetOutreach = (phoenixHomelessnessSnapshot?.categories || [])
+        .find((c) => c?.category === 'Street Outreach')
+      const engaged = streetOutreach?.value
+      const periodLabel = phoenixHomelessnessSnapshot?.periodLabel
+      const description = Number.isFinite(engaged) && engaged > 0
+        ? `${formatCompactCount(engaged)} served via Street Outreach${periodLabel ? ` (${periodLabel})` : ''}`
+        : 'Forecast heat-illness cases over the next 30 days'
+      return {
+        ...card,
+        metric: formatCompactCount(forecastCases),
+        description,
+      }
+    }
     return card
   })
 
@@ -252,15 +325,20 @@ export default function CityKPICards({ embedded = false }) {
     return generatePerformanceModalData(selectedDate, baltimore311Data, healthOverdoseData)
   }, [selectedCity, selectedDate, baltimore311Data, healthOverdoseData])
 
-  // Handle card click - only performance card is clickable for Baltimore
+  // Handle card click
   const handleCardClick = (card) => {
     if (card.id === 'performance' && selectedCity === 'baltimore' && baltimore311Data) {
       setIsPerformanceModalOpen(true)
+      return
+    }
+    if (card.id === 'risk') {
+      setCurrentView('risk')
     }
   }
 
   // Check if card is clickable
   const isClickable = (card) => {
+    if (card.id === 'risk') return true
     return card.id === 'performance' && selectedCity === 'baltimore'
   }
 

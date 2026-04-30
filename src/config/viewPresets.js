@@ -46,16 +46,16 @@ export const VIEW_PRESETS = {
   },
   phoenix: {
     maplibre: {
-      center: [-112.0740, 33.4484],
-      zoom: 9.5,
-      pitch: 0,
-      bearing: 0
+      center: [-112.11, 33.50],
+      zoom: 10,
+      pitch: 45,
+      bearing: 20
     },
     mapbox: {
-      center: [-112.0740, 33.4484],
-      zoom: 9.5,
-      pitch: 0,
-      bearing: 0
+      center: [-112.11, 33.50],
+      zoom: 10,
+      pitch: 45,
+      bearing: 20
     }
   }
 }

@@ -1,6 +1,79 @@
 import * as XLSX from 'xlsx'
 
 import heatReliefXlsxUrl from '../../External Datasets/Heat_Relief_Database_WithForecasting2.xlsx?url'
+import phoenixHeatIllnessesSyntheticDemo from '../data/phoenixHeatIllnessesSyntheticDemo.json'
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000
+
+/**
+ * Compute the historical average city-wide heat illness count for a 16-day
+ * window, using the HISTORICAL rows in the synthetic demo dataset.
+ * Strategy: average weekly rate across all historical years × (16/7).
+ */
+function computePhoenixHistoricalAvg16d() {
+  const rows = phoenixHeatIllnessesSyntheticDemo?.rows || []
+  const weekTotals = new Map() // "YYYY_WeekStart" -> total count
+
+  for (const r of rows) {
+    if (r?.Data_Type !== 'HISTORICAL') continue
+    const year = r?.Year
+    const ws = r?.Week_Start
+    const count = Number(r?.Count) || 0
+    if (!year || !ws || count <= 0) continue
+    const key = `${year}_${ws}`
+    weekTotals.set(key, (weekTotals.get(key) || 0) + count)
+  }
+
+  if (!weekTotals.size) return null
+
+  const totalCases = [...weekTotals.values()].reduce((a, b) => a + b, 0)
+  const totalWeeks = weekTotals.size
+  const avgPerWeek = totalCases / totalWeeks
+  // 16-day window ≈ 16/7 weeks
+  return Math.round(avgPerWeek * (16 / 7))
+}
+
+/** Sum forecast heat illnesses over [asOf, asOf+16d] from synthetic demo data. */
+function computePhoenixForecast16d(asOf = new Date()) {
+  const rows = phoenixHeatIllnessesSyntheticDemo?.rows || []
+  const start = asOf instanceof Date ? asOf.getTime() : Date.now()
+  const end = start + 16 * MS_PER_DAY
+
+  const byDistrict = new Map()
+  for (const r of rows) {
+    if (r?.Data_Type !== 'FORECAST_2026') continue
+    const ws = r?.Week_Start
+    const districtId = String(r?.Council_District ?? '').trim()
+    if (!ws || !districtId) continue
+    const wsMs = Date.parse(`${ws}T00:00:00Z`)
+    if (!Number.isFinite(wsMs)) continue
+    const weekEnd = wsMs + 6 * MS_PER_DAY
+    if (weekEnd < start || wsMs > end) continue
+    const count = Number(r.Count) || 0
+    byDistrict.set(districtId, (byDistrict.get(districtId) || 0) + count)
+  }
+
+  const entries = [...byDistrict.entries()]
+  if (!entries.length) {
+    // Fallback: use earliest 2 forecast weeks per district so demo always shows data
+    const fallback = new Map()
+    for (const r of rows) {
+      if (r?.Data_Type !== 'FORECAST_2026') continue
+      const districtId = String(r?.Council_District ?? '').trim()
+      if (!districtId) continue
+      if (!fallback.has(districtId)) fallback.set(districtId, [])
+      fallback.get(districtId).push(Number(r.Count) || 0)
+    }
+    for (const [id, counts] of fallback) {
+      byDistrict.set(id, counts.slice(0, 2).reduce((a, b) => a + b, 0))
+    }
+  }
+
+  const sorted = [...byDistrict.entries()].sort((a, b) => b[1] - a[1])
+  const total = sorted.reduce((sum, [, c]) => sum + c, 0)
+  const top2 = sorted.slice(0, 2).map(([districtId, count]) => ({ districtId, count }))
+  return { total, top2 }
+}
 
 function safeNum(v) {
   const n = Number(v)
@@ -219,6 +292,9 @@ export async function buildPhoenixHeatBriefingInput() {
     emsDeltaVsBaselinePct,
   })
 
+  const forecast16d = computePhoenixForecast16d(new Date())
+  const historicalAvg16d = computePhoenixHistoricalAvg16d()
+
   return {
     briefingDateISO: new Date().toISOString(),
     alertLevel: alertLevel || undefined,
@@ -232,6 +308,9 @@ export async function buildPhoenixHeatBriefingInput() {
     highestRiskDistricts: topDistricts.length ? topDistricts : undefined,
     hottestDistricts: topDistricts.length ? topDistricts : undefined,
     emsDeltaVsBaselinePct: Number.isFinite(emsDeltaVsBaselinePct) ? emsDeltaVsBaselinePct : undefined,
+    forecastHeatIllnesses16d: forecast16d.total > 0 ? forecast16d.total : undefined,
+    forecastTop2Districts16d: forecast16d.top2.length ? forecast16d.top2 : undefined,
+    historicalAvg16d: historicalAvg16d != null ? historicalAvg16d : undefined,
   }
 }
 

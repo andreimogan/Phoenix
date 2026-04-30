@@ -10,7 +10,7 @@ const PHOENIX_CFS_POINT = {
 export default function CallsForServiceLegend() {
   return (
     <div
-      className="pointer-events-none rounded-lg border shadow-xl z-30 overflow-hidden"
+      className="rounded-lg border shadow-xl z-30 overflow-hidden"
       style={{
         backgroundColor: 'var(--sand-surface)',
         borderColor: 'var(--color-gray-700)',

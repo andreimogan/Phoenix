@@ -18,7 +18,7 @@ export default function OverlayColumns() {
     rightWindowsOrder,
   } = usePanelContext()
 
-  if (currentView === 'performance' || currentView === 'work-orders') return null
+  if (currentView === 'performance') return null
 
   const anyRight =
     !!phoenixWeatherWindowVisible ||

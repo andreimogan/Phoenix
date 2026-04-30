@@ -32,7 +32,6 @@ export default function TemperatureLegend() {
         backdropFilter: 'blur(10px)',
         padding: 12,
         width: 220,
-        pointerEvents: 'none',
       }}
       aria-label="Temperature legend"
     >

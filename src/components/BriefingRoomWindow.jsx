@@ -17,7 +17,7 @@ export default function BriefingRoomWindow() {
   }, [phoenixInterventionWindowVisible, phoenixLatest311WindowVisible, phoenixWeatherWindowVisible])
 
   if (!phoenixBriefingRoomVisible) return null
-  if (currentView === 'performance' || currentView === 'work-orders') return null
+  if (currentView === 'performance') return null
 
   useEffect(() => {
     let cancelled = false

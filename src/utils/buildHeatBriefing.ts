@@ -8,6 +8,15 @@ export type DistrictRef =
       name: string
     }
 
+export type ForecastDistrict = { districtId: string; count: number }
+
+export type DecisionPriority = 'critical' | 'high' | 'moderate' | 'standard'
+
+export type StructuredRecommendation = {
+  priority: DecisionPriority
+  text: string
+}
+
 export type HeatBriefingInput = {
   /** When the briefing was generated. Used only for display if present. */
   briefingDateISO?: string
@@ -46,12 +55,21 @@ export type HeatBriefingInput = {
   /** Districts of concern (either by heat or risk). */
   hottestDistricts?: DistrictRef[]
   highestRiskDistricts?: DistrictRef[]
+
+  /** 16-day heat illness forecast total from synthetic demo data. */
+  forecastHeatIllnesses16d?: number
+  /** Top 2 districts ranked by 16-day forecast count. */
+  forecastTop2Districts16d?: ForecastDistrict[]
+  /** Historical average 16-day heat illness count (baseline for % comparison). */
+  historicalAvg16d?: number
 }
 
 export type HeatBriefingOutput = {
   topLineSummaries: string[]
   keyDevelopments: string[]
   decisionRecommendations: string[]
+  /** Structured version of decisionRecommendations with priority metadata. */
+  structuredRecommendations: StructuredRecommendation[]
 }
 
 function isFiniteNumber(n: unknown): n is number {
@@ -231,12 +249,67 @@ export function buildHeatBriefing(input: HeatBriefingInput): HeatBriefingOutput 
 
   // Ensure minimum counts without inventing values: use generic operational phrasing.
   while (keyDevelopments.length < 4) keyDevelopments.push('Operational posture remains focused on vulnerable populations and peak-hour readiness.')
-  while (decisionRecommendations.length < 3) decisionRecommendations.push('Coordinate departments to sustain cooling access, outreach coverage, and emergency response readiness.')
+  const FALLBACK_RECS = [
+    'Coordinate departments to sustain cooling access, outreach coverage, and emergency response readiness.',
+    'Maintain situational awareness and ensure field teams have updated protocols for the current alert level.',
+    'Review resource allocation across districts and confirm supply chain readiness for extended heat operations.',
+  ]
+  for (const fallback of FALLBACK_RECS) {
+    if (decisionRecommendations.length >= 3) break
+    if (!decisionRecommendations.includes(fallback)) decisionRecommendations.push(fallback)
+  }
+
+  // ── 16-day forecast threshold recommendations (always prepended; highest-priority first) ──
+  const structuredRecommendations: StructuredRecommendation[] = []
+
+  const forecast16d = isFiniteNumber(input.forecastHeatIllnesses16d) ? input.forecastHeatIllnesses16d : null
+  const histAvg = isFiniteNumber(input.historicalAvg16d) && input.historicalAvg16d > 0 ? input.historicalAvg16d : null
+  const top2 = input.forecastTop2Districts16d || []
+  const districtNames = top2.map((d) => `District ${d.districtId}`).join(' and ') || 'high-risk districts'
+  const topCount = top2[0]?.count ?? null
+
+  // Build a reusable "vs. historical" clause, e.g. " — 56% above the 16-day historical average (160 cases)"
+  const vsHistorical = (forecastVal: number): string => {
+    if (!histAvg) return ''
+    const pct = Math.round(((forecastVal - histAvg) / histAvg) * 100)
+    if (pct > 0) return ` — ${pct}% above the 16-day historical average (${histAvg.toLocaleString()} cases)`
+    if (pct < 0) return ` — ${Math.abs(pct)}% below the 16-day historical average (${histAvg.toLocaleString()} cases)`
+    return ` — at the 16-day historical average (${histAvg.toLocaleString()} cases)`
+  }
+
+  if (forecast16d != null) {
+    if (forecast16d >= 400) {
+      structuredRecommendations.push({
+        priority: 'critical',
+        text: `Activate emergency heat response protocol. Forecast shows ${forecast16d.toLocaleString()} heat-illness cases over the next 16 days${vsHistorical(forecast16d)} — ${districtNames} are highest-risk${isFiniteNumber(topCount) ? ` (${topCount.toLocaleString()} cases)` : ''}. Mobilize all available outreach teams, extend cooling centers to 24/7 operations, and coordinate EMS surge positioning immediately.`,
+      })
+    } else if (forecast16d >= 200) {
+      structuredRecommendations.push({
+        priority: 'high',
+        text: `Elevate heat response operations. ${forecast16d.toLocaleString()} cases forecast over the next 16 days${vsHistorical(forecast16d)}, with concentration in ${districtNames}. Scale cooling center hours, increase outreach frequency, and prepare EMS for above-baseline demand.`,
+      })
+    } else if (forecast16d >= 80) {
+      structuredRecommendations.push({
+        priority: 'moderate',
+        text: `Pre-position heat response resources. ${forecast16d.toLocaleString()} cases forecast over the next 16 days${vsHistorical(forecast16d)}. Review cooling center capacity and outreach coverage for ${districtNames} ahead of any temperature escalation.`,
+      })
+    } else {
+      structuredRecommendations.push({
+        priority: 'standard',
+        text: `Maintain standard heat response posture. 16-day forecast indicates ${forecast16d.toLocaleString()} cases${vsHistorical(forecast16d)} — within manageable range. Continue routine monitoring and ensure field protocols are current.`,
+      })
+    }
+  }
+
+  // Only the forecast-threshold card is surfaced in the UI.
+  // The existing text recommendations remain available on the output for
+  // other consumers but are intentionally excluded from structuredRecommendations.
 
   return {
     topLineSummaries: topLineSummaries.slice(0, 4),
     keyDevelopments: keyDevelopments.slice(0, 6),
     decisionRecommendations: decisionRecommendations.slice(0, 5),
+    structuredRecommendations,
   }
 }
 

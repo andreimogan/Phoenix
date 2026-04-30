@@ -1,4 +1,4 @@
-import { Map, Activity, ClipboardList, TrendingUp, DollarSign, Building2, ChevronLeft } from 'lucide-react'
+import { Map, Activity, TrendingUp, DollarSign, Building2, ChevronLeft } from 'lucide-react'
 import { usePanelContext } from '../contexts/PanelContext'
 
 const sandLogo = '/sand-logo.png'
@@ -13,34 +13,30 @@ export default function LeftNav() {
       label: 'Map View',
       enabled: true
     },
-    {
-      id: 'performance',
-      icon: Activity,
-      label: 'City Performance & Reliability',
-      enabled: false
-    },
-    {
-      id: 'work-orders',
-      icon: ClipboardList,
-      label: 'Work Orders',
-      enabled: true
-    },
+    // Order mirrors CityKPICards / cityKPIData: risk → performance → capital → economic.
+    // Labels here mirror the Phoenix KPI card titles for tooltip consistency.
     {
       id: 'risk',
       icon: TrendingUp,
       label: 'City Risk & Resilience',
-      enabled: false
+      enabled: true
     },
     {
-      id: 'economic',
-      icon: DollarSign,
-      label: 'City Economic Health',
+      id: 'performance',
+      icon: Activity,
+      label: '311 Service Requests',
       enabled: false
     },
     {
       id: 'capital',
       icon: Building2,
-      label: 'Capital & Asset Stewardship',
+      label: 'Housing & Affordability',
+      enabled: false
+    },
+    {
+      id: 'economic',
+      icon: DollarSign,
+      label: 'District Economic Health',
       enabled: false
     }
   ]

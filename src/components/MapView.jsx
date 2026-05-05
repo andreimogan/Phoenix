@@ -4272,13 +4272,13 @@ export default function MapView() {
           lines.push(`<div><strong>Homelessness services</strong> · ${servedStr} people served${asOfLabel ? ` <span style="opacity:0.75">(as of ${esc(asOfLabel)})</span>` : ''}</div>`)
         }
       } else {
-        if (phoenixCoolingCentersVisible) lines.push(`<div><strong>Cooling centers</strong> · ${Number.isFinite(ccCount) ? ccCount.toLocaleString() : '—'} dots</div>`)
-        if (phoenixHomelessnessVisible) lines.push(`<div><strong>Homelessness services</strong> · ${Number.isFinite(hCount) ? hCount.toLocaleString() : '—'} dots</div>`)
+        if (phoenixCoolingCentersVisible) lines.push(`<div><strong>Cooling centers</strong> · ${Number.isFinite(ccCount) ? ccCount.toLocaleString() : '—'}</div>`)
+        if (phoenixHomelessnessVisible) lines.push(`<div><strong>Homelessness services</strong> · ${Number.isFinite(hCount) ? hCount.toLocaleString() : '—'}</div>`)
       }
 
       const byCatHtml = mode === 'districts_distribution' && phoenixHomelessnessVisible && Array.isArray(byCat) && byCat.length
         ? `<div style="margin-top:6px;border-top:1px solid rgba(255,255,255,0.1);padding-top:6px">
-            <div style="font-size:10px;opacity:0.75;margin-bottom:4px">Homelessness dots by type</div>
+            <div style="font-size:10px;opacity:0.75;margin-bottom:4px">Homelessness by type</div>
             ${byCat.slice(0, 6).map((r) => `
               <div style="display:flex;justify-content:space-between;gap:8px;margin-top:2px">
                 <span style="opacity:0.8">${esc(r.category)}</span>

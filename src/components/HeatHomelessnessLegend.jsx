@@ -117,7 +117,7 @@ export default function HeatHomelessnessLegend() {
     phoenixHomelessnessAffectedNeighborhoodsVisible,
     phoenixHomelessnessCategoryEnabled,
     phoenixCoolingCentersVisible,
-    phoenixCoolingCentersGeoView,
+    phoenixCityServicesOverlayMode,
     callsForServiceStyle,
   } = usePanelContext()
 
@@ -128,6 +128,8 @@ export default function HeatHomelessnessLegend() {
   const showCoolingCenters = phoenixCoolingCentersVisible
   const showHomelessPoints = phoenixHomelessnessVisible
   const showHomelessNeighborRag = phoenixHomelessnessAffectedNeighborhoodsVisible
+  const cityServicesOverlay = String(phoenixCityServicesOverlayMode || 'none')
+  const showCityServicesOverlay = cityServicesOverlay !== 'none' && (showCoolingCenters || showHomelessPoints)
 
   if (!showHeatIllness && !showHeatDeaths && !showCoolingCenters && !showHomelessPoints && !showHomelessNeighborRag) {
     return null
@@ -194,15 +196,21 @@ export default function HeatHomelessnessLegend() {
                   Cooling center location
                 </span>
               </div>
-
-              {phoenixCoolingCentersGeoView !== 'none' ? (
-                <RagTwoRowLegend
-                  noDataColor={'rgba(82,82,91,0.35)'}
-                  gradientCss={'linear-gradient(to right, rgba(239,68,68,0.45), rgba(245,158,11,0.45), rgba(234,179,8,0.45), rgba(34,197,94,0.45))'}
-                  rampLabel="Density (high is better)"
-                />
-              ) : null}
             </div>
+          </Section>
+        ) : null}
+
+        {showCityServicesOverlay ? (
+          <Section title="City Services (district overlay)">
+            <RagTwoRowLegend
+              noDataColor={'rgba(82,82,91,0.35)'}
+              gradientCss={
+                cityServicesOverlay === 'district_capacity'
+                  ? 'linear-gradient(to right, rgba(34,197,94,0.45), rgba(245,158,11,0.45), rgba(239,68,68,0.45))'
+                  : 'linear-gradient(to right, rgba(239,68,68,0.45), rgba(245,158,11,0.45), rgba(34,197,94,0.45))'
+              }
+              rampLabel={cityServicesOverlay === 'district_capacity' ? 'Low / High visits' : 'Low / High distribution'}
+            />
           </Section>
         ) : null}
 

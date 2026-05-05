@@ -362,6 +362,12 @@ export const PanelProvider = ({ children }) => {
   const [phoenixHeatIllnessesGeoView, setPhoenixHeatIllnessesGeoView] = useState('districts') // 'districts' | 'villages'
   // Cooling centers overlay geometry: show district/village density choropleths, or none (points only).
   const [phoenixCoolingCentersGeoView, setPhoenixCoolingCentersGeoView] = useState('districts') // 'none' | 'districts' | 'villages'
+  // Cooling centers visit totals: 'current' = week aligned to calendar (like Heat Illnesses); 'all_historical' = sum all rows in workbook.
+  const [phoenixCoolingCentersTimeMode, setPhoenixCoolingCentersTimeMode] = useState('current')
+  // City Services overlay selector (shared map option for Cooling + Homelessness).
+  // 'none' = dots only, no district overlay; 'districts_distribution' = count of enabled service locations by district;
+  // 'district_capacity' = district totals (cooling visits + homelessness served/capacity when available).
+  const [phoenixCityServicesOverlayMode, setPhoenixCityServicesOverlayMode] = useState('none')
   // Choropleth name labels on the map (district or village polygons for heat illnesses).
   const [phoenixHeatIllnessGeoLabelsVisible, setPhoenixHeatIllnessGeoLabelsVisible] = useState(true)
 
@@ -1236,6 +1242,10 @@ export const PanelProvider = ({ children }) => {
     setPhoenixHeatIllnessesGeoView,
     phoenixCoolingCentersGeoView,
     setPhoenixCoolingCentersGeoView,
+    phoenixCoolingCentersTimeMode,
+    setPhoenixCoolingCentersTimeMode,
+    phoenixCityServicesOverlayMode,
+    setPhoenixCityServicesOverlayMode,
     phoenixHeatIllnessGeoLabelsVisible,
     setPhoenixHeatIllnessGeoLabelsVisible,
 

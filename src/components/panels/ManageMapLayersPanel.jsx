@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import {
   GripVertical,
   RefreshCw,
@@ -22,6 +22,7 @@ import {
   getFiltersByCategory,
 } from '../../utils/healthDataCategories'
 import phoenixHeatIllnessesSyntheticDemo from '../../data/phoenixHeatIllnessesSyntheticDemo.json'
+import { getPhoenixCoolingCentersContext } from '../../utils/phoenixCoolingCentersGeojson'
 
 const stlCategories = [
   {
@@ -101,6 +102,7 @@ const phoenixCategories = [
 
 export default function ManageMapLayersPanel() {
   const [cfsGeocodePromptDismissed, setCfsGeocodePromptDismissed] = useState(false)
+  const [phoenixCoolingWeekSummary, setPhoenixCoolingWeekSummary] = useState(null)
   const {
     layersVisible,
     toggleLayers,
@@ -203,9 +205,36 @@ export default function ManageMapLayersPanel() {
     setPhoenixHeatIllnessesGeoView,
     phoenixCoolingCentersGeoView,
     setPhoenixCoolingCentersGeoView,
+    phoenixCoolingCentersTimeMode,
+    setPhoenixCoolingCentersTimeMode,
+    phoenixCityServicesOverlayMode,
+    setPhoenixCityServicesOverlayMode,
     phoenixHeatIllnessGeoLabelsVisible,
     setPhoenixHeatIllnessGeoLabelsVisible,
   } = usePanelContext()
+
+  useEffect(() => {
+    if (selectedCity !== 'phoenix') {
+      setPhoenixCoolingWeekSummary(null)
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      try {
+        const asOf = selectedDate instanceof Date && !Number.isNaN(selectedDate.getTime())
+          ? selectedDate
+          : new Date()
+        const ccMode = String(phoenixCoolingCentersTimeMode || 'current') === 'all_historical'
+          ? 'all_historical'
+          : 'current'
+        const ctx = await getPhoenixCoolingCentersContext(asOf, ccMode)
+        if (!cancelled) setPhoenixCoolingWeekSummary(ctx)
+      } catch {
+        if (!cancelled) setPhoenixCoolingWeekSummary({ ok: false, label: 'Could not load cooling week' })
+      }
+    })()
+    return () => { cancelled = true }
+  }, [selectedCity, selectedDate, phoenixCoolingCentersTimeMode])
 
   const phoenixHeatIllnessCounts = useMemo(() => {
     const mode = String(phoenixHeatIllnessesTimeMode || 'current')
@@ -286,6 +315,24 @@ export default function ManageMapLayersPanel() {
   const [expandedPhoenixHeat, setExpandedPhoenixHeat] = useState(true)
   const [expandedPhoenixHeatIllnesses, setExpandedPhoenixHeatIllnesses] = useState(true)
   const [expandedPhoenixCoolingCenters, setExpandedPhoenixCoolingCenters] = useState(false)
+  /** City Services = Cooling Centers + Homelessness (nested under Heat & Homelessness) */
+  const [expandedPhoenixCityServices, setExpandedPhoenixCityServices] = useState(true)
+  const cityServicesSnapshotRef = useRef({
+    cooling: true,
+    homeless: true,
+    affected: false,
+  })
+
+  /** Last Heat + City Services visibilities before turning the category master off — restored when master is toggled back on. */
+  const heatHomelessnessBundleSnapshotRef = useRef({
+    heatIllnesses: true,
+    heatDeaths: false,
+    temperature: false,
+    cooling: true,
+    homeless: true,
+    affected: false,
+  })
+
   const [expandedPhoenixHeatDeaths, setExpandedPhoenixHeatDeaths] = useState(false)
   const [expandedPhoenixTemperature, setExpandedPhoenixTemperature] = useState(false)
   const [basemapStyleOpen, setBasemapStyleOpen] = useState(false)
@@ -458,18 +505,113 @@ export default function ManageMapLayersPanel() {
     if (keep !== 'temperature') setPhoenixTemperatureNeighborhoodsVisible(false)
   }
 
+  /** Turn off choropleths/metrics under the Heat accordion (illnesses, deaths, temperature). */
+  const disablePhoenixHeatStack = () => {
+    setPhoenixHeatIllnessesVisible(false)
+    setPhoenixHeatDeathsVisible(false)
+    setPhoenixTemperatureNeighborhoodsVisible(false)
+  }
+
+  /**
+   * Heat stack vs City Services:
+   * - Activating Heat turns off BOTH Cooling Centers and Homelessness.
+   * - Activating either City Service turns off Heat stack only; Cooling + Homelessness can be on together.
+   */
   const enforcePhoenixHeatHomelessnessPrimaryExclusivity = (keep) => {
-    // Only one of: Heat | Cooling Centers | Homelessness Services
-    if (keep !== 'heat') {
-      setPhoenixHeatIllnessesVisible(false)
-      setPhoenixHeatDeathsVisible(false)
-      setPhoenixTemperatureNeighborhoodsVisible(false)
-    }
-    if (keep !== 'cooling') setPhoenixCoolingCentersVisible(false)
-    if (keep !== 'homeless') {
+    if (keep === 'heat') {
+      setPhoenixCoolingCentersVisible(false)
       setPhoenixHomelessnessVisible(false)
       setPhoenixHomelessnessAffectedNeighborhoodsVisible(false)
+      return
     }
+    if (keep === 'cooling' || keep === 'homeless') {
+      disablePhoenixHeatStack()
+    }
+  }
+
+  const getPhoenixCityServicesMasterState = () => {
+    const c = !!phoenixCoolingCentersVisible
+    const h = !!phoenixHomelessnessVisible
+    if (!c && !h) return 'off'
+    if (c && h) return 'on'
+    return 'mixed'
+  }
+
+  const reconcileHeatOnlySubLayerSnapshot = (raw) => {
+    let heatIllnesses = !!raw.heatIllnesses
+    let heatDeaths = !!raw.heatDeaths
+    let temperature = !!raw.temperature
+    const activeCount = [heatIllnesses, heatDeaths, temperature].filter(Boolean).length
+    if (activeCount <= 1) {
+      return { heatIllnesses, heatDeaths, temperature }
+    }
+    // Sub-layers are mutually exclusive; prefer illnesses, then temperature, then deaths.
+    if (heatIllnesses) {
+      return { heatIllnesses: true, heatDeaths: false, temperature: false }
+    }
+    if (temperature) {
+      return { heatIllnesses: false, heatDeaths: false, temperature: true }
+    }
+    return { heatIllnesses: false, heatDeaths: true, temperature: false }
+  }
+
+  /** Sticky Heat & Homelessness category header toggle: bundles Heat stack + City Services on/off together. */
+  const togglePhoenixHeatHomelessnessCategoryMaster = () => {
+    if (selectedCity !== 'phoenix') return
+    if (phoenixActiveMasterLayer === 'heat-homelessness') {
+      heatHomelessnessBundleSnapshotRef.current = {
+        heatIllnesses: !!phoenixHeatIllnessesVisible,
+        heatDeaths: !!phoenixHeatDeathsVisible,
+        temperature: !!phoenixTemperatureNeighborhoodsVisible,
+        cooling: !!phoenixCoolingCentersVisible,
+        homeless: !!phoenixHomelessnessVisible,
+        affected: !!phoenixHomelessnessAffectedNeighborhoodsVisible,
+      }
+      setPhoenixActiveMasterLayer(null)
+      return
+    }
+    setPhoenixActiveMasterLayer('heat-homelessness')
+    const snap = heatHomelessnessBundleSnapshotRef.current
+    const heat = reconcileHeatOnlySubLayerSnapshot(snap)
+    let cooling = !!snap.cooling
+    let homeless = !!snap.homeless
+    if (!cooling && !homeless) {
+      cooling = true
+      homeless = true
+    }
+    const affected = !!(homeless && snap.affected)
+    if (!heat.heatIllnesses && !heat.heatDeaths && !heat.temperature) {
+      heat.heatIllnesses = true
+      heat.heatDeaths = false
+      heat.temperature = false
+    }
+    setPhoenixHeatIllnessesVisible(heat.heatIllnesses)
+    setPhoenixHeatDeathsVisible(heat.heatDeaths)
+    setPhoenixTemperatureNeighborhoodsVisible(heat.temperature)
+    setPhoenixCoolingCentersVisible(cooling)
+    setPhoenixHomelessnessVisible(homeless)
+    setPhoenixHomelessnessAffectedNeighborhoodsVisible(affected)
+  }
+
+  const togglePhoenixCityServicesMaster = () => {
+    const state = getPhoenixCityServicesMasterState()
+    if (state === 'off') {
+      const s = cityServicesSnapshotRef.current
+      setPhoenixCoolingCentersVisible(!!s.cooling)
+      setPhoenixHomelessnessVisible(!!s.homeless)
+      setPhoenixHomelessnessAffectedNeighborhoodsVisible(!!s.homeless && !!s.affected)
+      disablePhoenixHeatStack()
+      activateHeatMasterIfNeeded()
+      return
+    }
+    cityServicesSnapshotRef.current = {
+      cooling: !!phoenixCoolingCentersVisible,
+      homeless: !!phoenixHomelessnessVisible,
+      affected: !!phoenixHomelessnessAffectedNeighborhoodsVisible,
+    }
+    setPhoenixCoolingCentersVisible(false)
+    setPhoenixHomelessnessVisible(false)
+    setPhoenixHomelessnessAffectedNeighborhoodsVisible(false)
   }
 
   const togglePhoenixHeatIllnessesLayer = () => {
@@ -529,6 +671,19 @@ export default function ManageMapLayersPanel() {
     const onCount = flags.filter(Boolean).length
     if (onCount === 0) return 'off'
     if (onCount === flags.length) return 'on'
+    return 'mixed'
+  }
+
+  /**
+   * Sticky "Heat & Homelessness" header switch — same visual pattern as the inner Heat toggle:
+   * fully on (thumb right) only when both top inner accordions are active (any Heat sub-layer on, any City Services layer on);
+   * mixed (−) when the category is selected but one of those accordions is fully off.
+   */
+  const getPhoenixHeatHomelessnessCategorySwitchVisualState = () => {
+    if (phoenixActiveMasterLayer !== 'heat-homelessness') return 'off'
+    const heatAccordionOn = getPhoenixHeatMasterState() !== 'off'
+    const cityServicesAccordionOn = getPhoenixCityServicesMasterState() !== 'off'
+    if (heatAccordionOn && cityServicesAccordionOn) return 'on'
     return 'mixed'
   }
 
@@ -1219,33 +1374,55 @@ export default function ManageMapLayersPanel() {
                 )}
 
                 {/* Right: Phoenix master layer toggle (Calls / Heat & Homelessness — mutually exclusive) */}
-                {selectedCity === 'phoenix' && (category.id === 'calls' || category.id === 'heat-homelessness') && (
+                {selectedCity === 'phoenix' && (category.id === 'calls' || category.id === 'heat-homelessness') && (() => {
+                  const bundleVis =
+                    category.id === 'heat-homelessness'
+                      ? getPhoenixHeatHomelessnessCategorySwitchVisualState()
+                      : null
+                  const masterActive =
+                    category.id === 'heat-homelessness'
+                      ? bundleVis !== 'off'
+                      : phoenixActiveMasterLayer === category.id
+                  return (
                   <div className="flex items-center gap-2 shrink-0">
                     <button
                       type="button"
                       role="switch"
-                      aria-checked={phoenixActiveMasterLayer === category.id}
+                      aria-checked={masterActive}
                       aria-label={`Toggle ${category.name} master layer`}
                       className="relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
                       style={{
-                        backgroundColor: phoenixActiveMasterLayer === category.id
-                          ? (category.id === 'calls' ? '#3b82f6' : '#eab308')
-                          : 'rgba(255,255,255,0.10)',
+                        backgroundColor:
+                          category.id === 'calls'
+                            ? (phoenixActiveMasterLayer === category.id ? '#3b82f6' : 'rgba(255,255,255,0.10)')
+                            : (bundleVis !== 'off' ? '#eab308' : 'rgba(255,255,255,0.10)'),
                       }}
                       onClick={(e) => {
                         e.stopPropagation()
-                        setPhoenixActiveMasterLayer(prev => prev === category.id ? null : category.id)
+                        if (category.id === 'heat-homelessness') {
+                          togglePhoenixHeatHomelessnessCategoryMaster()
+                          return
+                        }
+                        setPhoenixActiveMasterLayer((prev) => (prev === category.id ? null : category.id))
                       }}
                     >
+                      {category.id === 'heat-homelessness' && bundleVis === 'mixed' ? (
+                        <Minus className="w-3 h-3 text-white absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2" />
+                      ) : (
                       <span
                         className="pointer-events-none inline-block h-3 w-3 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out"
                         style={{
-                          transform: phoenixActiveMasterLayer === category.id ? 'translateX(12px)' : 'translateX(0)',
+                          transform:
+                            category.id === 'heat-homelessness'
+                              ? (bundleVis === 'on' ? 'translateX(12px)' : 'translateX(0)')
+                              : (phoenixActiveMasterLayer === category.id ? 'translateX(12px)' : 'translateX(0)'),
                         }}
                       />
+                      )}
                     </button>
                   </div>
-                )}
+                  )
+                })()}
 
               </div>
 
@@ -1703,23 +1880,27 @@ export default function ManageMapLayersPanel() {
                       )
 
                       const toggleHeatAccordion = () => {
-                        setExpandedPhoenixHeat((v) => {
-                          const next = !v
-                          if (next) setExpandedPhoenixHomelessness(false)
-                          return next
-                        })
+                        setExpandedPhoenixHeat((v) => !v)
                       }
                       const toggleHomelessnessAccordion = () => {
-                        setExpandedPhoenixHomelessness((v) => {
-                          const next = !v
-                          if (next) setExpandedPhoenixHeat(false)
-                          return next
-                        })
+                        setExpandedPhoenixHomelessness((v) => !v)
                       }
+                      const toggleCityServicesAccordion = () => {
+                        setExpandedPhoenixCityServices((v) => !v)
+                      }
+
+                      const cityServicesMasterState = getPhoenixCityServicesMasterState()
+                      const cityServicesRowActive = !!phoenixCoolingCentersVisible || !!phoenixHomelessnessVisible
 
                       const segmentedBtnStyle = (active) => ({
                         borderColor: active ? 'rgba(234,179,8,0.45)' : 'var(--color-gray-700)',
                         backgroundColor: active ? 'rgba(234,179,8,0.12)' : 'rgba(255,255,255,0.02)',
+                        color: active ? 'var(--color-gray-100)' : 'var(--color-gray-300)',
+                      })
+
+                      const coolingSegmentedBtnStyle = (active) => ({
+                        borderColor: active ? 'rgba(46,185,194,0.55)' : 'var(--color-gray-700)',
+                        backgroundColor: active ? 'rgba(46,185,194,0.12)' : 'rgba(255,255,255,0.02)',
                         color: active ? 'var(--color-gray-100)' : 'var(--color-gray-300)',
                       })
 
@@ -2073,209 +2254,330 @@ export default function ManageMapLayersPanel() {
                             </div>
                           )}
 
-                          {/* Cooling Centers accordion (top-level; sibling to Heat) */}
+                          {/* City Services: Cooling Centers + Homelessness Services */}
                           <div
                             className="rounded-lg border px-2.5 py-2 flex items-center justify-between gap-2 transition-colors"
                             style={{
-                              borderColor: phoenixCoolingCentersVisible ? 'rgba(46,185,194,0.55)' : 'var(--color-gray-600)',
-                              backgroundColor: phoenixCoolingCentersVisible ? 'rgba(46,185,194,0.10)' : 'rgba(26, 29, 34, 0.15)',
+                              borderColor: cityServicesRowActive ? 'rgba(46,185,194,0.45)' : 'var(--color-gray-600)',
+                              backgroundColor: cityServicesRowActive ? 'rgba(46,185,194,0.08)' : 'rgba(26, 29, 34, 0.15)',
                             }}
                           >
                             <div
                               className="flex items-center gap-1.5 flex-1 min-w-0 cursor-pointer"
-                              onClick={() => setExpandedPhoenixCoolingCenters((v) => !v)}
+                              onClick={toggleCityServicesAccordion}
                             >
                               <div className="w-3 h-3 flex items-center justify-center shrink-0" style={{ color: 'var(--color-gray-400)' }}>
-                                {expandedPhoenixCoolingCenters ? <ChevronDown className="w-2.5 h-2.5" /> : <ChevronRight className="w-2.5 h-2.5" />}
+                                {expandedPhoenixCityServices ? <ChevronDown className="w-2.5 h-2.5" /> : <ChevronRight className="w-2.5 h-2.5" />}
                               </div>
-                              <div className="min-w-0">
-                                <div className="text-[12px] font-medium leading-tight truncate" style={{ color: 'var(--color-gray-200)' }}>
-                                  Cooling Centers
-                                </div>
+                              <div className="text-[12px] font-medium leading-tight truncate" style={{ color: 'var(--color-gray-200)' }}>
+                                City Services
                               </div>
                             </div>
-                            {renderHeatSubLayerToggle(!!phoenixCoolingCentersVisible, togglePhoenixCoolingCentersLayer, 'Toggle Cooling Centers')}
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={cityServicesMasterState !== 'off'}
+                              aria-label="Toggle City Services (Cooling Centers and Homelessness Services)"
+                              className="relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
+                              style={{
+                                backgroundColor: cityServicesMasterState === 'off' ? 'rgba(255,255,255,0.10)' : '#2dd4bf',
+                              }}
+                              onClick={(e) => { e.stopPropagation(); togglePhoenixCityServicesMaster() }}
+                            >
+                              {cityServicesMasterState === 'mixed' ? (
+                                <Minus className="w-3 h-3 text-white absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2" />
+                              ) : (
+                                <span
+                                  className="pointer-events-none inline-block h-3 w-3 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out"
+                                  style={{ transform: cityServicesMasterState === 'on' ? 'translateX(12px)' : 'translateX(0)' }}
+                                />
+                              )}
+                            </button>
                           </div>
 
-                          {expandedPhoenixCoolingCenters && (
-                            <div className="space-y-1 ml-3">
+                          {expandedPhoenixCityServices && (
+                            <div className="space-y-2 ml-3">
                               <div className="rounded-md border px-2 py-2 space-y-1"
                                 style={{ borderColor: 'var(--color-gray-700)', background: 'rgba(255,255,255,0.02)' }}
                               >
                                 <div className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--color-gray-500)' }}>
                                   Map options
                                 </div>
-                                <div className="flex items-center gap-1">
-                                  <button
-                                    type="button"
-                                    className="text-[11px] px-2 py-1 rounded-md border"
-                                    style={segmentedBtnStyle(phoenixCoolingCentersGeoView === 'none')}
-                                    onClick={() => {
-                                      setPhoenixCoolingCentersGeoView('none')
-                                    }}
-                                  >
-                                    None
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="text-[11px] px-2 py-1 rounded-md border"
-                                    style={segmentedBtnStyle(phoenixCoolingCentersGeoView === 'districts')}
-                                    onClick={() => {
-                                      setPhoenixCoolingCentersGeoView('districts')
-                                    }}
-                                  >
-                                    Districts
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="text-[11px] px-2 py-1 rounded-md border"
-                                    style={segmentedBtnStyle(phoenixCoolingCentersGeoView === 'villages')}
-                                    onClick={() => {
-                                      setPhoenixCoolingCentersGeoView('villages')
-                                    }}
-                                  >
-                                    Villages
-                                  </button>
+                                <div className="space-y-2">
+                                  <div className="space-y-1">
+                                    <div className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: 'var(--color-gray-400)' }}>
+                                      City distribution
+                                    </div>
+                                    <div className="flex items-center gap-1 flex-wrap">
+                                      <button
+                                        type="button"
+                                        className="text-[11px] px-2 py-1 rounded-md border"
+                                        style={coolingSegmentedBtnStyle(String(phoenixCityServicesOverlayMode || 'none') === 'none')}
+                                        onClick={() => setPhoenixCityServicesOverlayMode('none')}
+                                      >
+                                        None
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="text-[11px] px-2 py-1 rounded-md border"
+                                        style={coolingSegmentedBtnStyle(String(phoenixCityServicesOverlayMode || 'none') === 'districts_distribution')}
+                                        onClick={() => setPhoenixCityServicesOverlayMode('districts_distribution')}
+                                      >
+                                        Districts distribution
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="text-[11px] px-2 py-1 rounded-md border"
+                                        style={coolingSegmentedBtnStyle(String(phoenixCityServicesOverlayMode || 'none') === 'district_capacity')}
+                                        onClick={() => setPhoenixCityServicesOverlayMode('district_capacity')}
+                                      >
+                                        District capacity
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  <div className="space-y-1 pt-1 border-t" style={{ borderColor: 'var(--color-gray-700)' }}>
+                                    <div className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: 'var(--color-gray-400)' }}>
+                                      Temperature distribution
+                                    </div>
+                                    <div className="flex items-center gap-1 flex-wrap">
+                                      <button
+                                        type="button"
+                                        className="text-[11px] px-2 py-1 rounded-md border"
+                                        style={segmentedBtnStyle(!phoenixTemperatureNeighborhoodsVisible)}
+                                        onClick={() => {
+                                          setPhoenixTemperatureNeighborhoodsVisible(false)
+                                          setPhoenixTemperatureNeighborhoodsLabelsVisible(false)
+                                        }}
+                                      >
+                                        None
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="text-[11px] px-2 py-1 rounded-md border"
+                                        style={segmentedBtnStyle(!!phoenixTemperatureNeighborhoodsVisible)}
+                                        onClick={() => {
+                                          setPhoenixTemperatureNeighborhoodsVisible(true)
+                                          setPhoenixTemperatureNeighborhoodsLabelsVisible(true)
+                                        }}
+                                      >
+                                        Show Temperature
+                                      </button>
+                                    </div>
+                                  </div>
                                 </div>
                               </div>
-                            </div>
-                          )}
 
-                          {/* Homelessness accordion */}
-                          {homelessnessLayer && (
-                            <div
-                              className="rounded-lg border px-2.5 py-2 flex items-center justify-between gap-2 transition-colors"
-                              style={{
-                                borderColor: homelessnessVisible ? 'rgba(234,179,8,0.45)' : 'var(--color-gray-600)',
-                                backgroundColor: homelessnessVisible ? 'rgba(234,179,8,0.10)' : 'rgba(26, 29, 34, 0.15)',
-                              }}
-                            >
+                              {/* Cooling Centers */}
                               <div
-                                className="flex items-center gap-1.5 flex-1 min-w-0 cursor-pointer"
-                                onClick={toggleHomelessnessAccordion}
+                                className="rounded-lg border px-2.5 py-2 flex items-center justify-between gap-2 transition-colors"
+                                style={{
+                                  borderColor: phoenixCoolingCentersVisible ? 'rgba(46,185,194,0.55)' : 'var(--color-gray-600)',
+                                  backgroundColor: phoenixCoolingCentersVisible ? 'rgba(46,185,194,0.10)' : 'rgba(26, 29, 34, 0.15)',
+                                }}
                               >
-                                <div className="w-3 h-3 flex items-center justify-center shrink-0" style={{ color: 'var(--color-gray-400)' }}>
-                                  {expandedPhoenixHomelessness ? <ChevronDown className="w-2.5 h-2.5" /> : <ChevronRight className="w-2.5 h-2.5" />}
-                                </div>
-                                <div className="min-w-0">
-                                  <div className="text-[12px] font-medium leading-tight truncate" style={{ color: 'var(--color-gray-200)' }}>
-                                    Homelessness Services
+                                <div
+                                  className="flex items-center gap-1.5 flex-1 min-w-0 cursor-pointer"
+                                  onClick={() => setExpandedPhoenixCoolingCenters((v) => !v)}
+                                >
+                                  <div className="w-3 h-3 flex items-center justify-center shrink-0" style={{ color: 'var(--color-gray-400)' }}>
+                                    {expandedPhoenixCoolingCenters ? <ChevronDown className="w-2.5 h-2.5" /> : <ChevronRight className="w-2.5 h-2.5" />}
                                   </div>
-                                  <div className="text-[10px] mt-0.5" style={{ color: 'var(--color-gray-500)' }}>
-                                    {status === 'loading'
-                                      ? 'Loading CSV…'
-                                      : status === 'error'
-                                        ? 'CSV load error'
-                                        : snapshotLabel
-                                          ? `Latest ≤ selected date: ${snapshotLabel}`
-                                          : 'No data available for selected date'}
+                                  <div className="min-w-0">
+                                    <div className="text-[12px] font-medium leading-tight truncate" style={{ color: 'var(--color-gray-200)' }}>
+                                      Cooling Centers
+                                    </div>
                                   </div>
                                 </div>
+                                {renderHeatSubLayerToggle(!!phoenixCoolingCentersVisible, togglePhoenixCoolingCentersLayer, 'Toggle Cooling Centers')}
                               </div>
-                              <button
-                                type="button"
-                                role="switch"
-                                aria-checked={homelessnessVisible}
-                                aria-label="Toggle Phoenix homelessness services layer"
-                                className="relative inline-flex h-4 w-8 shrink-0 cursor-pointer items-center rounded-full transition-colors"
-                                style={{ backgroundColor: homelessnessVisible ? '#eab308' : 'var(--color-gray-400)' }}
-                                onClick={() => setPhoenixHomelessnessVisible((prev) => {
-                                  const next = !prev
-                                  if (next) {
-                                    enforcePhoenixHeatHomelessnessPrimaryExclusivity('homeless')
-                                    activateHeatMasterIfNeeded()
-                                  }
-                                  return next
-                                })}
-                              >
-                                <span
-                                  className="pointer-events-none absolute left-0.5 top-0.5 h-3 w-3 rounded-full bg-white shadow transition-transform"
-                                  style={{ transform: homelessnessVisible ? 'translateX(14px)' : 'translateX(0)' }}
-                                />
-                              </button>
-                            </div>
-                          )}
 
-                          {expandedPhoenixHomelessness && categories.length > 0 && (
-                            <div className="space-y-1 ml-3">
-                              {categories.map((catName) => {
-                                const isOn = phoenixHomelessnessCategoryEnabled?.[catName] !== false
-                                const served = snapshotValuesByCategory.has(catName) ? snapshotValuesByCategory.get(catName) : null
-                                const servedLabel = Number.isFinite(served) ? ` (${Number(served).toLocaleString()})` : ''
-                                return (
-                                  <div
-                                    key={catName}
-                                    className="rounded-md border transition-colors px-2 py-1.5 flex items-center justify-between gap-2"
-                                    style={{
-                                      borderColor: isOn ? 'rgba(234,179,8,0.30)' : 'var(--color-gray-700)',
-                                      backgroundColor: isOn ? 'rgba(234,179,8,0.07)' : 'transparent',
-                                    }}
+                              {expandedPhoenixCoolingCenters && (
+                                <div className="space-y-1 ml-3">
+                                  <div className="rounded-md border px-2 py-2 space-y-1"
+                                    style={{ borderColor: 'var(--color-gray-700)', background: 'rgba(255,255,255,0.02)' }}
                                   >
-                                    <span className="text-[11px] font-medium leading-tight truncate" style={{ color: 'var(--color-gray-200)' }}>
-                                      {catName}{servedLabel}
-                                    </span>
-                                    <button
-                                      type="button"
-                                      role="switch"
-                                      aria-checked={isOn}
-                                      aria-label={`Toggle ${catName}`}
-                                      className="relative inline-flex h-4 w-8 shrink-0 cursor-pointer items-center rounded-full transition-colors"
-                                      style={{ backgroundColor: isOn ? '#eab308' : 'var(--color-gray-400)' }}
-                                      onClick={() => togglePhoenixHomelessnessCategory(catName)}
-                                    >
-                                      <span
-                                        className="pointer-events-none absolute left-0.5 top-0.5 h-3 w-3 rounded-full bg-white shadow transition-transform"
-                                        style={{ transform: isOn ? 'translateX(14px)' : 'translateX(0)' }}
-                                      />
-                                    </button>
+                                    <div className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--color-gray-500)' }}>
+                                      Time
+                                    </div>
+                                    <div className="flex items-center gap-1 flex-wrap">
+                                      <button
+                                        type="button"
+                                        className="text-[11px] px-2 py-1 rounded-md border"
+                                        style={coolingSegmentedBtnStyle(String(phoenixCoolingCentersTimeMode || 'current') === 'current')}
+                                        onClick={() => setPhoenixCoolingCentersTimeMode('current')}
+                                      >
+                                        Current Time
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="text-[11px] px-2 py-1 rounded-md border"
+                                        style={coolingSegmentedBtnStyle(String(phoenixCoolingCentersTimeMode || 'current') === 'all_historical')}
+                                        onClick={() => setPhoenixCoolingCentersTimeMode('all_historical')}
+                                      >
+                                        Aggregated Data
+                                      </button>
+                                    </div>
+
+                                    {phoenixCoolingWeekSummary?.ok ? (
+                                      <div
+                                        className="rounded-md border px-2 py-2 text-[10px] leading-snug"
+                                        style={{
+                                          borderColor: 'rgba(46,185,194,0.35)',
+                                          background: 'rgba(46,185,194,0.06)',
+                                          color: 'var(--color-gray-300)',
+                                        }}
+                                      >
+                                        {phoenixCoolingWeekSummary.mode === 'all_historical' ? (
+                                          <>
+                                            <div
+                                              className="text-[10px] font-semibold uppercase tracking-wide"
+                                              style={{ color: 'rgba(46,185,194,0.95)' }}
+                                            >
+                                              All recorded visits
+                                            </div>
+                                            <div className="mt-1" style={{ color: 'var(--color-gray-200)' }}>
+                                              {phoenixCoolingWeekSummary.weekRangeLabel}
+                                            </div>
+                                            <div className="mt-1 opacity-90">
+                                              Data from <strong>{phoenixCoolingWeekSummary.dataStartLabel}</strong>
+                                              {' to '}
+                                              <strong>{phoenixCoolingWeekSummary.dataEndLabel}</strong>
+                                              {' · '}
+                                              {phoenixCoolingWeekSummary.totalVisits.toLocaleString()} visits
+                                              {' · '}
+                                              {phoenixCoolingWeekSummary.mappedLocationCount} dots on map
+                                            </div>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <div
+                                              className="text-[10px] font-semibold uppercase tracking-wide"
+                                              style={{ color: 'rgba(46,185,194,0.95)' }}
+                                            >
+                                              Reporting week (calendar)
+                                            </div>
+                                            <div className="mt-1" style={{ color: 'var(--color-gray-200)' }}>
+                                              {phoenixCoolingWeekSummary.weekRangeLabel}
+                                            </div>
+                                            <div className="mt-1 opacity-90">
+                                              As of <strong>{phoenixCoolingWeekSummary.asOfLabel}</strong>
+                                              {' · '}
+                                              {phoenixCoolingWeekSummary.totalVisits.toLocaleString()} visits
+                                              {' · '}
+                                              {phoenixCoolingWeekSummary.mappedLocationCount} dots on map
+                                            </div>
+                                          </>
+                                        )}
+                                      </div>
+                                    ) : phoenixCoolingWeekSummary && !phoenixCoolingWeekSummary.ok ? (
+                                      <div className="text-[10px] opacity-70 px-0.5">
+                                        Cooling data: {phoenixCoolingWeekSummary.label || 'Unavailable'}
+                                      </div>
+                                    ) : null}
                                   </div>
-                                )
-                              })}
-                            </div>
-                          )}
-
-                          {expandedPhoenixHomelessness && (
-                            <div className="mt-2 ml-3 rounded-md border px-2 py-2 flex items-center justify-between gap-2"
-                              style={{ borderColor: 'var(--color-gray-700)', background: 'rgba(0,0,0,0.12)' }}
-                            >
-                              <div className="min-w-0">
-                                <div className="text-[11px] font-semibold leading-tight" style={{ color: 'var(--color-gray-200)' }}>
-                                  Show districts
                                 </div>
-                                <div className="text-[10px] mt-0.5" style={{ color: 'var(--color-gray-500)' }}>
-                                  Colors districts by homelessness severity
-                                </div>
-                              </div>
-                              <button
-                                type="button"
-                                role="switch"
-                                aria-checked={phoenixHomelessnessAffectedNeighborhoodsVisible}
-                                aria-label="Toggle affected neighborhoods (homelessness severity)"
-                                className="relative inline-flex h-4 w-8 shrink-0 cursor-pointer items-center rounded-full transition-colors"
-                                style={{ backgroundColor: phoenixHomelessnessAffectedNeighborhoodsVisible ? '#eab308' : 'var(--color-gray-400)' }}
-                                onClick={() => setPhoenixHomelessnessAffectedNeighborhoodsVisible((v) => {
-                                  const next = !v
-                                  if (next) {
-                                    setPhoenixNeighborhoodBoundariesVisible(false)
-                                    setPhoenixCouncilDistrictBoundariesVisible(false)
-                                    setPhoenixVillagesCfsRagVisible(false)
-                                    setPhoenixCouncilDistrictsCfsRagVisible(false)
-                                  }
-                                  return next
-                                })}
-                              >
-                                <span
-                                  className="pointer-events-none absolute left-0.5 top-0.5 h-3 w-3 rounded-full bg-white shadow transition-transform"
-                                  style={{ transform: phoenixHomelessnessAffectedNeighborhoodsVisible ? 'translateX(14px)' : 'translateX(0)' }}
-                                />
-                              </button>
-                            </div>
-                          )}
+                              )}
 
-                          {expandedPhoenixHomelessness && status === 'error' && message && (
-                            <p className="text-[10px] px-1" style={{ color: 'rgba(248,113,113,0.85)' }}>
-                              {message}
-                            </p>
+                              {/* Homelessness Services */}
+                              {homelessnessLayer && (
+                                <div
+                                  className="rounded-lg border px-2.5 py-2 flex items-center justify-between gap-2 transition-colors"
+                                  style={{
+                                    borderColor: homelessnessVisible ? 'rgba(234,179,8,0.45)' : 'var(--color-gray-600)',
+                                    backgroundColor: homelessnessVisible ? 'rgba(234,179,8,0.10)' : 'rgba(26, 29, 34, 0.15)',
+                                  }}
+                                >
+                                  <div
+                                    className="flex items-center gap-1.5 flex-1 min-w-0 cursor-pointer"
+                                    onClick={toggleHomelessnessAccordion}
+                                  >
+                                    <div className="w-3 h-3 flex items-center justify-center shrink-0" style={{ color: 'var(--color-gray-400)' }}>
+                                      {expandedPhoenixHomelessness ? <ChevronDown className="w-2.5 h-2.5" /> : <ChevronRight className="w-2.5 h-2.5" />}
+                                    </div>
+                                    <div className="min-w-0">
+                                      <div className="text-[12px] font-medium leading-tight truncate" style={{ color: 'var(--color-gray-200)' }}>
+                                        Homelessness Services
+                                      </div>
+                                      <div className="text-[10px] mt-0.5" style={{ color: 'var(--color-gray-500)' }}>
+                                        {status === 'loading'
+                                          ? 'Loading CSV…'
+                                          : status === 'error'
+                                            ? 'CSV load error'
+                                            : snapshotLabel
+                                              ? `Latest ≤ selected date: ${snapshotLabel}`
+                                              : 'No data available for selected date'}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    role="switch"
+                                    aria-checked={homelessnessVisible}
+                                    aria-label="Toggle Phoenix homelessness services layer"
+                                    className="relative inline-flex h-4 w-8 shrink-0 cursor-pointer items-center rounded-full transition-colors"
+                                    style={{ backgroundColor: homelessnessVisible ? '#eab308' : 'var(--color-gray-400)' }}
+                                    onClick={() => setPhoenixHomelessnessVisible((prev) => {
+                                      const next = !prev
+                                      if (next) {
+                                        enforcePhoenixHeatHomelessnessPrimaryExclusivity('homeless')
+                                        activateHeatMasterIfNeeded()
+                                      }
+                                      return next
+                                    })}
+                                  >
+                                    <span
+                                      className="pointer-events-none absolute left-0.5 top-0.5 h-3 w-3 rounded-full bg-white shadow transition-transform"
+                                      style={{ transform: homelessnessVisible ? 'translateX(14px)' : 'translateX(0)' }}
+                                    />
+                                  </button>
+                                </div>
+                              )}
+
+                              {expandedPhoenixHomelessness && categories.length > 0 && (
+                                <div className="space-y-1 ml-3">
+                                  {categories.map((catName) => {
+                                    const isOn = phoenixHomelessnessCategoryEnabled?.[catName] !== false
+                                    const served = snapshotValuesByCategory.has(catName) ? snapshotValuesByCategory.get(catName) : null
+                                    const servedLabel = Number.isFinite(served) ? ` (${Number(served).toLocaleString()})` : ''
+                                    return (
+                                      <div
+                                        key={catName}
+                                        className="rounded-md border transition-colors px-2 py-1.5 flex items-center justify-between gap-2"
+                                        style={{
+                                          borderColor: isOn ? 'rgba(234,179,8,0.30)' : 'var(--color-gray-700)',
+                                          backgroundColor: isOn ? 'rgba(234,179,8,0.07)' : 'transparent',
+                                        }}
+                                      >
+                                        <span className="text-[11px] font-medium leading-tight truncate" style={{ color: 'var(--color-gray-200)' }}>
+                                          {catName}{servedLabel}
+                                        </span>
+                                        <button
+                                          type="button"
+                                          role="switch"
+                                          aria-checked={isOn}
+                                          aria-label={`Toggle ${catName}`}
+                                          className="relative inline-flex h-4 w-8 shrink-0 cursor-pointer items-center rounded-full transition-colors"
+                                          style={{ backgroundColor: isOn ? '#eab308' : 'var(--color-gray-400)' }}
+                                          onClick={() => togglePhoenixHomelessnessCategory(catName)}
+                                        >
+                                          <span
+                                            className="pointer-events-none absolute left-0.5 top-0.5 h-3 w-3 rounded-full bg-white shadow transition-transform"
+                                            style={{ transform: isOn ? 'translateX(14px)' : 'translateX(0)' }}
+                                          />
+                                        </button>
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              )}
+
+                              {expandedPhoenixHomelessness && status === 'error' && message && (
+                                <p className="text-[10px] ml-3 px-1" style={{ color: 'rgba(248,113,113,0.85)' }}>
+                                  {message}
+                                </p>
+                              )}
+                            </div>
                           )}
                         </div>
                       )

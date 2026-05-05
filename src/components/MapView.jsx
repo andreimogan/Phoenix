@@ -411,6 +411,8 @@ export default function MapView() {
     phoenixHeatIllnessesGranularity,
     phoenixHeatIllnessesGeoView,
     phoenixCoolingCentersGeoView,
+    phoenixCoolingCentersTimeMode,
+    phoenixCityServicesOverlayMode,
     phoenixHeatIllnessGeoLabelsVisible,
     callsForServiceVisible,
     callsForServiceStyle,
@@ -469,6 +471,16 @@ export default function MapView() {
   const phoenixCouncilDistrictsCfsRagHoverId = useRef(null)
   const phoenixCouncilDistrictsCfsPrepared = useRef(null) // { key, prepared }
   const phoenixVillageToCouncilDistrictRef = useRef(null) // { key, map: Map(villageName -> districtLabel) }
+  const phoenixCoolingCentersLastGeojsonRef = useRef(null)
+  const phoenixCityServicesDistrictsPrepared = useRef(null) // { key, prepared }
+  const phoenixCityServicesPopup = useRef(null)
+  const phoenixCityServicesHoverId = useRef(null)
+  const phoenixCityServicesSelectedId = useRef(null)
+
+  const closeCityServicesPopup = () => {
+    try { phoenixCityServicesPopup.current?.remove?.() } catch {}
+    phoenixCityServicesPopup.current = null
+  }
   const phoenixVillageHourlyTempsCache = useRef(new Map()) // name -> { times: string[], tempsC: number[] }
   const phoenixHeatDeathsLabelMarkersRef = useRef([]) // Array<maplibre Marker>
   const phoenixHomelessnessSnapshotRef = useRef(null)
@@ -494,7 +506,8 @@ export default function MapView() {
   }, [phoenixHomelessnessSnapshot])
 
   useEffect(() => {
-    phoenixHomelessnessCategoryEnabledRef.current = phoenixHomelessnessCategoryEnabled || {}
+    const enabled = phoenixHomelessnessCategoryEnabled || {}
+    phoenixHomelessnessCategoryEnabledRef.current = enabled
   }, [phoenixHomelessnessCategoryEnabled])
 
   useEffect(() => {
@@ -760,6 +773,13 @@ export default function MapView() {
         promoteId: 'OBJECTID',
       })
 
+      // Phoenix council districts overlay for City Services (derived; shared map option)
+      map.current.addSource('phoenix-council-districts-city-services', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+        promoteId: 'OBJECTID',
+      })
+
       // Phoenix council districts colored by temperature (derived; citywide value projected to districts)
       map.current.addSource('phoenix-council-districts-temperature', {
         type: 'geojson',
@@ -996,6 +1016,66 @@ export default function MapView() {
         id: 'phoenix-council-districts-homelessness-border',
         type: 'line',
         source: 'phoenix-council-districts-homelessness',
+        paint: {
+          'line-color': [
+            'case',
+            ['boolean', ['feature-state', 'selected'], false], 'rgba(255,255,255,0.95)',
+            ['boolean', ['feature-state', 'hover'], false], 'rgba(255,255,255,0.85)',
+            'rgba(255,255,255,0.25)',
+          ],
+          'line-width': [
+            'case',
+            ['any', ['boolean', ['feature-state', 'selected'], false], ['boolean', ['feature-state', 'hover'], false]],
+            2.5,
+            1.5,
+          ],
+          'line-opacity': 0.9,
+        },
+        layout: { visibility: 'none' },
+      }, firstSymbolId)
+
+      // Phoenix council districts: City Services overlay (distribution / capacity)
+      map.current.addLayer({
+        id: 'phoenix-council-districts-city-services-fill',
+        type: 'fill',
+        source: 'phoenix-council-districts-city-services',
+        paint: {
+          'fill-color': [
+            'case',
+            ['boolean', ['feature-state', 'selected'], false], 'rgba(255,255,255,0.92)',
+            ['boolean', ['feature-state', 'hover'], false], 'rgba(255,255,255,0.88)',
+            [
+              'case',
+              ['==', ['get', 'csMode'], 'district_capacity'],
+              // Capacity: low visits is better (green) → high visits concerning (red)
+              [
+                'interpolate',
+                ['linear'],
+                ['coalesce', ['get', 'csScore'], 0],
+                0, 'rgba(34, 197, 94, 0.35)',
+                0.5, 'rgba(245, 158, 11, 0.35)',
+                1, 'rgba(239, 68, 68, 0.40)',
+              ],
+              // Distribution: low service presence (red) → high presence (green)
+              [
+                'interpolate',
+                ['linear'],
+                ['coalesce', ['get', 'csScore'], 0],
+                0, 'rgba(239, 68, 68, 0.40)',
+                0.5, 'rgba(245, 158, 11, 0.35)',
+                1, 'rgba(34, 197, 94, 0.35)',
+              ],
+            ]
+          ],
+          'fill-opacity': 0.85,
+        },
+        layout: { visibility: 'none' },
+      }, firstSymbolId)
+
+      map.current.addLayer({
+        id: 'phoenix-council-districts-city-services-border',
+        type: 'line',
+        source: 'phoenix-council-districts-city-services',
         paint: {
           'line-color': [
             'case',
@@ -1314,9 +1394,9 @@ export default function MapView() {
           ],
           'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
           'text-size': 15,
-          // Let MapLibre try alternate placements before dropping labels due to collisions.
-          'text-variable-anchor': ['center', 'top', 'bottom', 'left', 'right', 'top-left', 'top-right', 'bottom-left', 'bottom-right'],
-          'text-radial-offset': 0.6,
+          // Place temperature labels slightly below district centers to reduce collisions.
+          'text-anchor': 'top',
+          'text-offset': [0, 1.1],
           'text-padding': 1,
           // Only 8 labels: always show (avoid “missing District 8” due to collisions).
           'text-allow-overlap': true,
@@ -2082,6 +2162,54 @@ export default function MapView() {
       map.current.on('click', 'phoenix-homelessness-unclustered', showPhoenixHomelessnessSyntheticPopup)
       map.current.on('click', 'phoenix-homelessness-heatmap-points', showPhoenixHomelessnessSyntheticPopup)
 
+      map.current.on('click', 'phoenix-cooling-centers-points', (e) => {
+        const f = e.features?.[0]
+        if (!f) return
+        const g = f.geometry
+        const coords = g?.type === 'Point' && Array.isArray(g.coordinates)
+          ? g.coordinates.slice()
+          : [e.lngLat.lng, e.lngLat.lat]
+        while (Math.abs(e.lngLat.lng - coords[0]) > 180) {
+          coords[0] += e.lngLat.lng > coords[0] ? 360 : -360
+        }
+        const p = f.properties || {}
+        const name = String(p.name || 'Cooling center')
+        const addr = String(p.address || '').trim()
+        const dist = String(p.councilDistrict || '').trim()
+        const vc = Number(p.visitCount)
+        const visitsLabel = Number.isFinite(vc) ? vc.toLocaleString() : '—'
+        const cap = Number(p.capacityEstimate)
+        const capLabel = Number.isFinite(cap) ? cap.toLocaleString() : null
+        const weekLabel = String(p.weekRangeLabel || p.weekStart || '').trim() || '—'
+        const esc = (s) => String(s)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+        const isAllHistorical = String(p.coolingTimeMode || '') === 'all_historical'
+        const periodLine = isAllHistorical
+          ? `Recorded period · ${esc(weekLabel)}`
+          : `Reporting week · ${esc(weekLabel)}`
+        const visitsLine = isAllHistorical
+          ? `Visits (all recorded) · <span style="color:#5eead4">${visitsLabel}</span>`
+          : `Visits (reporting week) · <span style="color:#5eead4">${visitsLabel}</span>`
+        new mapLib.current.Popup({ closeButton: true, maxWidth: '300px', className: 'popup-311' })
+          .setLngLat(coords)
+          .setHTML(`
+            <div style="font-size:12px;line-height:1.45;color:rgba(255,255,255,0.92);min-width:200px">
+              <div style="font-weight:700;margin-bottom:6px;color:#fff">${esc(name)}</div>
+              ${addr ? `<div style="opacity:0.88;margin-bottom:4px">${esc(addr)}</div>` : ''}
+              ${dist ? `<div style="opacity:0.75;font-size:11px;margin-bottom:6px">District ${esc(dist)}</div>` : ''}
+              <div style="font-size:11px;opacity:0.85;margin-bottom:6px;border-top:1px solid rgba(255,255,255,0.1);padding-top:6px">
+                ${periodLine}
+              </div>
+              <div style="font-size:12px;font-weight:600">${visitsLine}</div>
+              ${capLabel ? `<div style="margin-top:4px;font-size:11px;opacity:0.85">Capacity (est.) · <span style="font-weight:700;color:#fff">${capLabel}</span> people</div>` : ''}
+            </div>
+          `)
+          .addTo(map.current)
+      })
+
       // Click homelessness cluster -> zoom
       map.current.on('click', 'phoenix-homelessness-clusters', async (e) => {
         const features = map.current.queryRenderedFeatures(e.point, { layers: ['phoenix-homelessness-clusters'] })
@@ -2105,6 +2233,7 @@ export default function MapView() {
         'phoenix-council-districts-temperature-fill',
         'phoenix-villages-heatdeaths-fill',
         'phoenix-villages-cfs-rag-fill',
+        'phoenix-cooling-centers-points',
       ].forEach((id) => {
         map.current.on('mouseenter', id, () => { map.current.getCanvas().style.cursor = 'pointer' })
         map.current.on('mouseleave', id, () => { map.current.getCanvas().style.cursor = '' })
@@ -3549,7 +3678,8 @@ export default function MapView() {
     if (!map.current || !mapLoaded) return
     if (!map.current.getSource('phoenix-council-districts-homelessness')) return
 
-    const shouldShow = selectedCity === 'phoenix' && phoenixHomelessnessAffectedNeighborhoodsVisible
+    // Superseded by City Services map options (district overlays). Keep this overlay disabled.
+    const shouldShow = false
     const setVis = (id, vis) => {
       if (map.current.getLayer(id)) map.current.setLayoutProperty(id, 'visibility', vis)
     }
@@ -3803,12 +3933,11 @@ export default function MapView() {
     setVis('phoenix-cooling-centers-cluster-count', 'none')
     setVis('phoenix-cooling-centers-points', shouldShow ? 'visible' : 'none')
 
-    const showDistrictRag = shouldShow && phoenixCoolingCentersGeoView === 'districts'
-    const showVillageRag = shouldShow && phoenixCoolingCentersGeoView === 'villages'
-    setVis('phoenix-council-districts-cooling-centers-rag-fill', showDistrictRag ? 'visible' : 'none')
-    setVis('phoenix-council-districts-cooling-centers-rag-border', showDistrictRag ? 'visible' : 'none')
-    setVis('phoenix-villages-cooling-centers-rag-fill', showVillageRag ? 'visible' : 'none')
-    setVis('phoenix-villages-cooling-centers-rag-border', showVillageRag ? 'visible' : 'none')
+    // City Services overlays now handle district-level views; keep these legacy layers hidden.
+    setVis('phoenix-council-districts-cooling-centers-rag-fill', 'none')
+    setVis('phoenix-council-districts-cooling-centers-rag-border', 'none')
+    setVis('phoenix-villages-cooling-centers-rag-fill', 'none')
+    setVis('phoenix-villages-cooling-centers-rag-border', 'none')
 
     if (!shouldShow) {
       map.current.getSource('phoenix-cooling-centers').setData({ type: 'FeatureCollection', features: [] })
@@ -3820,66 +3949,17 @@ export default function MapView() {
     let cancelled = false
     ;(async () => {
       try {
-        const geojson = await buildPhoenixCoolingCentersGeojson()
+        const asOf = selectedDate instanceof Date && !Number.isNaN(selectedDate.getTime())
+          ? selectedDate
+          : new Date()
+        const ccTime = String(phoenixCoolingCentersTimeMode || 'current')
+        const geojson = await buildPhoenixCoolingCentersGeojson(asOf, {
+          mode: ccTime === 'all_historical' ? 'all_historical' : 'current',
+        })
         if (cancelled) return
+        phoenixCoolingCentersLastGeojsonRef.current = geojson
         map.current.getSource('phoenix-cooling-centers').setData(geojson)
 
-        const points = geojson?.features || []
-
-        // Villages choropleth
-        const baseVillages = phoenixVillagesGeojson || phoenixVillagesCache.current
-        if (baseVillages?.features?.length) {
-          const pre = buildPhoenixVillageCfsPrecomputed(baseVillages)
-          const { counts } = countPointsInVillages(points, pre)
-          const max = Math.max(0, ...Array.from(counts.values()))
-          const derived = {
-            type: 'FeatureCollection',
-            features: (baseVillages.features || []).map((f) => {
-              const name = String(f?.properties?.NAME ?? '').trim()
-              const c = name ? (counts.get(name) || 0) : 0
-              const score = max > 0 ? c / max : 0
-              return {
-                ...f,
-                properties: {
-                  ...(f.properties || {}),
-                  ccCount: c,
-                  ccScore: Number.isFinite(score) ? score : 0,
-                },
-              }
-            }),
-          }
-          map.current.getSource('phoenix-villages-cooling-centers-rag').setData(derived)
-        } else {
-          map.current.getSource('phoenix-villages-cooling-centers-rag').setData({ type: 'FeatureCollection', features: [] })
-        }
-
-        // Districts choropleth
-        const baseDistricts = phoenixCouncilDistrictsGeojson || phoenixCouncilDistrictsCache.current
-        if (baseDistricts?.features?.length) {
-          const pre = buildPhoenixCouncilDistrictCfsPrecomputed(baseDistricts)
-          const { counts } = countPointsInVillages(points, pre)
-          const max = Math.max(0, ...Array.from(counts.values()))
-          const derived = {
-            type: 'FeatureCollection',
-            features: (baseDistricts.features || []).map((f) => {
-              const objectIdRaw = f?.properties?.OBJECTID ?? f?.id
-              const objectId = objectIdRaw == null ? '' : String(objectIdRaw)
-              const c = objectId ? (counts.get(objectId) || 0) : 0
-              const score = max > 0 ? c / max : 0
-              return {
-                ...f,
-                properties: {
-                  ...(f.properties || {}),
-                  ccCount: c,
-                  ccScore: Number.isFinite(score) ? score : 0,
-                },
-              }
-            }),
-          }
-          map.current.getSource('phoenix-council-districts-cooling-centers-rag').setData(derived)
-        } else {
-          map.current.getSource('phoenix-council-districts-cooling-centers-rag').setData({ type: 'FeatureCollection', features: [] })
-        }
       } catch {
         if (cancelled) return
         map.current.getSource('phoenix-cooling-centers').setData({ type: 'FeatureCollection', features: [] })
@@ -3891,7 +3971,9 @@ export default function MapView() {
     return () => { cancelled = true }
   }, [
     selectedCity,
+    selectedDate,
     phoenixCoolingCentersVisible,
+    phoenixCoolingCentersTimeMode,
     phoenixCoolingCentersGeoView,
     phoenixVillagesGeojson,
     phoenixCouncilDistrictsGeojson,
@@ -3914,6 +3996,336 @@ export default function MapView() {
     })()
     return () => { cancelled = true }
   }, [selectedCity, phoenixCoolingCentersVisible])
+
+  // Phoenix City Services overlay (districts): shared map options for Cooling + Homelessness
+  useEffect(() => {
+    if (!map.current || !mapLoaded) return
+    if (!map.current.getSource('phoenix-council-districts-city-services')) return
+
+    const mode = String(phoenixCityServicesOverlayMode || 'none')
+    const shouldShow = selectedCity === 'phoenix'
+      && mode !== 'none'
+      && (!!phoenixCoolingCentersVisible || !!phoenixHomelessnessVisible)
+
+    const setVis = (id, vis) => {
+      if (map.current.getLayer(id)) map.current.setLayoutProperty(id, 'visibility', vis)
+    }
+
+    setVis('phoenix-council-districts-city-services-fill', shouldShow ? 'visible' : 'none')
+    setVis('phoenix-council-districts-city-services-border', shouldShow ? 'visible' : 'none')
+
+    if (!shouldShow) {
+      closeCityServicesPopup()
+      phoenixCityServicesHoverId.current = null
+      phoenixCityServicesSelectedId.current = null
+      map.current.getSource('phoenix-council-districts-city-services').setData({ type: 'FeatureCollection', features: [] })
+      return
+    }
+
+    const baseDistricts = phoenixCouncilDistrictsGeojson || phoenixCouncilDistrictsCache.current
+    if (!baseDistricts?.features?.length) {
+      map.current.getSource('phoenix-council-districts-city-services').setData({ type: 'FeatureCollection', features: [] })
+      return
+    }
+
+    const preparedKey = baseDistricts
+    let prepared = phoenixCityServicesDistrictsPrepared.current?.key === preparedKey
+      ? phoenixCityServicesDistrictsPrepared.current.prepared
+      : null
+    if (!prepared) {
+      prepared = buildPhoenixCouncilDistrictCfsPrecomputed(baseDistricts)
+      phoenixCityServicesDistrictsPrepared.current = { key: preparedKey, prepared }
+    }
+
+    const hitDistrictId = (lng, lat) => {
+      for (const d of prepared) {
+        const [minX, minY, maxX, maxY] = d.bbox
+        if (lng < minX || lng > maxX || lat < minY || lat > maxY) continue
+        let hit = false
+        for (const rings of d.ringsList) {
+          if (pointInPolygonRings(lng, lat, rings)) { hit = true; break }
+        }
+        if (hit) return d.id
+      }
+      return null
+    }
+
+    const districtIds = prepared.map((d) => d.id)
+    const ccCount = new Map(districtIds.map((id) => [id, 0]))
+    const ccVisits = new Map(districtIds.map((id) => [id, 0]))
+    const homelessCount = new Map(districtIds.map((id) => [id, 0]))
+    const homelessByCat = new Map(districtIds.map((id) => [id, new Map()]))
+
+    let cancelled = false
+    ;(async () => {
+      try {
+        if (phoenixCoolingCentersVisible) {
+          const asOf = selectedDate instanceof Date && !Number.isNaN(selectedDate.getTime())
+            ? selectedDate
+            : new Date()
+          const ccTime = String(phoenixCoolingCentersTimeMode || 'current')
+          const geo = await buildPhoenixCoolingCentersGeojson(asOf, {
+            mode: ccTime === 'all_historical' ? 'all_historical' : 'current',
+          })
+          if (cancelled) return
+          const coolingPts = geo?.features || []
+          for (const f of coolingPts) {
+            if (f?.geometry?.type !== 'Point') continue
+            const c = f.geometry.coordinates
+            if (!Array.isArray(c) || c.length < 2) continue
+            const lng = c[0], lat = c[1]
+            if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue
+            const id = hitDistrictId(lng, lat)
+            if (!id) continue
+            ccCount.set(id, (ccCount.get(id) || 0) + 1)
+            const v = Number(f?.properties?.visitCount || 0)
+            ccVisits.set(id, (ccVisits.get(id) || 0) + (Number.isFinite(v) ? v : 0))
+          }
+        }
+
+    const enabledCats = phoenixHomelessnessCategoryEnabled || {}
+    const baseHomeless = phoenixHomelessnessSyntheticPoints || { type: 'FeatureCollection', features: [] }
+    const homelessPts = phoenixHomelessnessVisible
+      ? (baseHomeless.features || []).filter((f) => {
+        const cat = f?.properties?.category
+        if (cat && enabledCats[cat] === false) return false
+        return true
+      })
+      : []
+
+    const totalPtsByCat = new Map()
+    const ptsByCatByDistrict = new Map(districtIds.map((id) => [id, new Map()]))
+    if (phoenixHomelessnessVisible) {
+      for (const f of homelessPts) {
+        if (f?.geometry?.type !== 'Point') continue
+        const c = f.geometry.coordinates
+        if (!Array.isArray(c) || c.length < 2) continue
+        const lng = c[0], lat = c[1]
+        if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue
+        const id = hitDistrictId(lng, lat)
+        if (!id) continue
+        const cat = String(f?.properties?.category || 'Unknown')
+        homelessCount.set(id, (homelessCount.get(id) || 0) + 1)
+        const inner = homelessByCat.get(id) || new Map()
+        inner.set(cat, (inner.get(cat) || 0) + 1)
+        homelessByCat.set(id, inner)
+
+        totalPtsByCat.set(cat, (totalPtsByCat.get(cat) || 0) + 1)
+        const inner2 = ptsByCatByDistrict.get(id) || new Map()
+        inner2.set(cat, (inner2.get(cat) || 0) + 1)
+        ptsByCatByDistrict.set(id, inner2)
+      }
+    }
+
+    // Capacity mode: estimate district people-served by distributing category totals by point share.
+    const snap = phoenixHomelessnessSnapshotRef.current
+    const servedByCat = new Map(
+      (snap?.categories || [])
+        .filter((c) => c?.category && Number.isFinite(c?.value))
+        .map((c) => [String(c.category), Number(c.value)])
+    )
+    const homelessServedEst = new Map(districtIds.map((id) => [id, 0]))
+    if (mode === 'district_capacity' && phoenixHomelessnessVisible && servedByCat.size) {
+      for (const [cat, servedTotal] of servedByCat.entries()) {
+        if (enabledCats?.[cat] === false) continue
+        const denom = totalPtsByCat.get(cat) || 0
+        if (denom <= 0) continue
+        for (const id of districtIds) {
+          const n = (ptsByCatByDistrict.get(id) || new Map()).get(cat) || 0
+          if (n <= 0) continue
+          homelessServedEst.set(id, (homelessServedEst.get(id) || 0) + servedTotal * (n / denom))
+        }
+      }
+    }
+
+        // Build derived FeatureCollection with a normalized csScore for styling.
+        const values = []
+        for (const id of districtIds) {
+          const v = mode === 'district_capacity'
+            ? (phoenixCoolingCentersVisible ? (ccVisits.get(id) || 0) : 0) + (phoenixHomelessnessVisible ? (homelessServedEst.get(id) || 0) : 0)
+            : (phoenixCoolingCentersVisible ? (ccCount.get(id) || 0) : 0) + (phoenixHomelessnessVisible ? (homelessCount.get(id) || 0) : 0)
+          values.push(v)
+        }
+        const maxV = Math.max(0, ...values)
+
+        const derived = {
+          type: 'FeatureCollection',
+          features: (baseDistricts.features || []).map((f) => {
+            const objectId = String(f?.properties?.OBJECTID ?? f?.id ?? '')
+            if (!objectId) return f
+            const ccC = ccCount.get(objectId) || 0
+            const hC = homelessCount.get(objectId) || 0
+            const ccV = ccVisits.get(objectId) || 0
+            const hS = homelessServedEst.get(objectId) || 0
+            const valueForColor = mode === 'district_capacity'
+              ? (phoenixCoolingCentersVisible ? ccV : 0) + (phoenixHomelessnessVisible ? hS : 0)
+              : (phoenixCoolingCentersVisible ? ccC : 0) + (phoenixHomelessnessVisible ? hC : 0)
+            const score = maxV > 0 ? (valueForColor / maxV) : 0
+            const byCat = Array.from((homelessByCat.get(objectId) || new Map()).entries())
+              .sort((a, b) => b[1] - a[1])
+              .map(([category, count]) => ({ category, count }))
+            return {
+              ...f,
+              properties: {
+                ...(f.properties || {}),
+                csMode: mode,
+                csScore: Number.isFinite(score) ? score : 0,
+                csCoolingCount: ccC,
+                csHomelessCount: hC,
+                csCoolingVisits: Math.round(ccV),
+                csHomelessServedEst: Math.round(hS),
+                csHomelessByCategoryJson: JSON.stringify(byCat),
+                csAsOfLabel: snap?.periodLabel || null,
+              },
+            }
+          }),
+        }
+
+        map.current.getSource('phoenix-council-districts-city-services').setData(derived)
+      } catch {
+        if (cancelled) return
+        map.current.getSource('phoenix-council-districts-city-services').setData({ type: 'FeatureCollection', features: [] })
+      }
+    })()
+    return () => { cancelled = true }
+  }, [
+    selectedCity,
+    phoenixCityServicesOverlayMode,
+    phoenixCoolingCentersVisible,
+    phoenixCoolingCentersTimeMode,
+    phoenixHomelessnessVisible,
+    phoenixHomelessnessCategoryEnabled,
+    phoenixHomelessnessSnapshot,
+    phoenixCouncilDistrictsGeojson,
+    selectedDate,
+    mapLoaded,
+  ])
+
+  useEffect(() => {
+    if (!map.current || !mapLoaded) return
+    if (!map.current.getLayer('phoenix-council-districts-city-services-fill')) return
+
+    const layerId = 'phoenix-council-districts-city-services-fill'
+
+    const clearHover = () => {
+      const prev = phoenixCityServicesHoverId.current
+      if (prev == null) return
+      try { map.current.setFeatureState({ source: 'phoenix-council-districts-city-services', id: prev }, { hover: false }) } catch {}
+      phoenixCityServicesHoverId.current = null
+    }
+
+    const onMove = (e) => {
+      const f = e.features?.[0]
+      const id = String(f?.properties?.OBJECTID ?? f?.id ?? '')
+      if (!id) return
+      if (phoenixCityServicesHoverId.current === id) return
+      clearHover()
+      phoenixCityServicesHoverId.current = id
+      try { map.current.setFeatureState({ source: 'phoenix-council-districts-city-services', id }, { hover: true }) } catch {}
+    }
+
+    const onLeave = () => clearHover()
+
+    const onClick = (e) => {
+      const f = e.features?.[0]
+      if (!f) return
+      const id = String(f?.properties?.OBJECTID ?? f?.id ?? '')
+      if (!id) return
+
+      // Single-select
+      const prevSel = phoenixCityServicesSelectedId.current
+      if (prevSel && prevSel !== id) {
+        try { map.current.setFeatureState({ source: 'phoenix-council-districts-city-services', id: prevSel }, { selected: false }) } catch {}
+      }
+      const nextSelected = prevSel !== id
+      phoenixCityServicesSelectedId.current = nextSelected ? id : null
+      try { map.current.setFeatureState({ source: 'phoenix-council-districts-city-services', id }, { selected: nextSelected }) } catch {}
+
+      closeCityServicesPopup()
+      if (!nextSelected) return
+
+      const p = f.properties || {}
+      const mode = String(p.csMode || phoenixCityServicesOverlayMode || 'none')
+      const districtLabel = String(p?.DISTRICT ?? p?.District ?? id)
+      const center = getGeojsonFeatureCenter(f) || [e.lngLat.lng, e.lngLat.lat]
+
+      const ccCount = Number(p.csCoolingCount || 0)
+      const hCount = Number(p.csHomelessCount || 0)
+      const ccVisits = Number(p.csCoolingVisits || 0)
+      const hServed = Number(p.csHomelessServedEst || 0)
+      const asOfLabel = String(p.csAsOfLabel || '').trim()
+
+      let byCat = []
+      try { byCat = JSON.parse(p.csHomelessByCategoryJson || '[]') } catch { byCat = [] }
+
+      const esc = (s) => String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/\"/g, '&quot;')
+
+      const lines = []
+      if (mode === 'district_capacity') {
+        if (phoenixCoolingCentersVisible) lines.push(`<div><strong>Cooling centers</strong> · ${Number.isFinite(ccVisits) ? ccVisits.toLocaleString() : '—'} visits</div>`)
+        if (phoenixHomelessnessVisible) {
+          const servedStr = Number.isFinite(hServed) ? hServed.toLocaleString() : '—'
+          lines.push(`<div><strong>Homelessness services</strong> · ${servedStr} people served${asOfLabel ? ` <span style="opacity:0.75">(as of ${esc(asOfLabel)})</span>` : ''}</div>`)
+        }
+      } else {
+        if (phoenixCoolingCentersVisible) lines.push(`<div><strong>Cooling centers</strong> · ${Number.isFinite(ccCount) ? ccCount.toLocaleString() : '—'} dots</div>`)
+        if (phoenixHomelessnessVisible) lines.push(`<div><strong>Homelessness services</strong> · ${Number.isFinite(hCount) ? hCount.toLocaleString() : '—'} dots</div>`)
+      }
+
+      const byCatHtml = mode === 'districts_distribution' && phoenixHomelessnessVisible && Array.isArray(byCat) && byCat.length
+        ? `<div style="margin-top:6px;border-top:1px solid rgba(255,255,255,0.1);padding-top:6px">
+            <div style="font-size:10px;opacity:0.75;margin-bottom:4px">Homelessness dots by type</div>
+            ${byCat.slice(0, 6).map((r) => `
+              <div style="display:flex;justify-content:space-between;gap:8px;margin-top:2px">
+                <span style="opacity:0.8">${esc(r.category)}</span>
+                <span style="font-weight:700">${Number(r.count || 0).toLocaleString()}</span>
+              </div>
+            `).join('')}
+          </div>`
+        : ''
+
+      phoenixCityServicesPopup.current = new mapLib.current.Popup({ closeButton: true, maxWidth: '320px', className: 'popup-311' })
+        .setLngLat(center)
+        .setHTML(`
+          <div style="font-size:12px;line-height:1.45;color:rgba(255,255,255,0.92);min-width:220px">
+            <div style="font-weight:700;margin-bottom:6px;color:#fff">District ${esc(districtLabel)}</div>
+            <div style="font-size:11px;opacity:0.85;margin-bottom:6px">
+              ${mode === 'district_capacity' ? 'District capacity' : 'Districts distribution'}
+            </div>
+            <div style="display:flex;flex-direction:column;gap:4px">
+              ${lines.join('')}
+            </div>
+            ${byCatHtml}
+          </div>
+        `)
+        .addTo(map.current)
+
+      phoenixCityServicesPopup.current.on('close', () => {
+        const sel = phoenixCityServicesSelectedId.current
+        if (sel) {
+          try { map.current.setFeatureState({ source: 'phoenix-council-districts-city-services', id: sel }, { selected: false }) } catch {}
+        }
+        phoenixCityServicesSelectedId.current = null
+      })
+    }
+
+    map.current.on('mousemove', layerId, onMove)
+    map.current.on('mouseleave', layerId, onLeave)
+    map.current.on('click', layerId, onClick)
+
+    return () => {
+      if (!map.current) return
+      map.current.off('mousemove', layerId, onMove)
+      map.current.off('mouseleave', layerId, onLeave)
+      map.current.off('click', layerId, onClick)
+      clearHover()
+      closeCityServicesPopup()
+    }
+  }, [selectedCity, phoenixCityServicesOverlayMode, phoenixCoolingCentersVisible, phoenixHomelessnessVisible, mapLoaded])
 
   // Phoenix council districts colored by temperature (citywide hourly value projected to districts)
   useEffect(() => {

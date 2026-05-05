@@ -31,6 +31,7 @@ import {
 } from '../utils/openMeteoHourlyTemps'
 import { getPhoenixDistrictTempsCache, isForecastStale, setPhoenixDistrictTempsCache } from '../utils/phoenixDistrictTempsCache'
 import { ensurePhoenixSituationalLayers, applyPhoenixSituationalLayers } from '../utils/phoenixSituationalAwarenessLayers'
+import { getPhoenixDailyHeatDemandFactors, pickDailyFactorForSelectedDate, getPhoenix16DayHeatDemandMultiplier } from '../utils/phoenixServicesForecast'
 
 function getGeojsonFeatureCenter(feature) {
   // Cheap center: bbox midpoint of all coordinates
@@ -426,6 +427,7 @@ export default function RiskMapView() {
     phoenixSituationalAwareness,
     phoenixHomelessnessSnapshot,
     phoenixHomelessnessCategoryEnabled,
+    phoenixHomelessnessTimeMode,
     phoenixCallsForServiceMinDate,
     phoenixCallsForServiceMaxDate,
     baltimore311Visible, 
@@ -482,6 +484,7 @@ export default function RiskMapView() {
   const phoenixCityServicesHoverId = useRef(null)
   const phoenixCityServicesSelectedId = useRef(null)
   const phoenixHomelessnessSnapshotRef = useRef(null)
+  const phoenixHomelessnessTimeModeRef = useRef('all_historical')
   const phoenixHomelessnessCategoryEnabledRef = useRef({})
   const phoenixTemperatureNeighborhoodsLabelsVisibleRef = useRef(false)
   const phoenixHeatDeathsLabelsVisibleRef = useRef(false)
@@ -502,6 +505,10 @@ export default function RiskMapView() {
   useEffect(() => {
     phoenixHomelessnessSnapshotRef.current = phoenixHomelessnessSnapshot
   }, [phoenixHomelessnessSnapshot])
+
+  useEffect(() => {
+    phoenixHomelessnessTimeModeRef.current = phoenixHomelessnessTimeMode
+  }, [phoenixHomelessnessTimeMode])
 
   useEffect(() => {
     phoenixHomelessnessCategoryEnabledRef.current = phoenixHomelessnessCategoryEnabled || {}
@@ -2132,15 +2139,27 @@ export default function RiskMapView() {
         const coords = feature.geometry.coordinates.slice()
         const p = feature.properties || {}
         const currentSnap = phoenixHomelessnessSnapshotRef.current
+        const timeMode = String(phoenixHomelessnessTimeModeRef.current || 'all_historical')
         const snapLabel = currentSnap?.periodLabel || null
         const served = (currentSnap?.categories || []).find((c) => c?.category && c.category === p.category)?.value
         const servedLabel = Number.isFinite(served) ? Number(served).toLocaleString() : '—'
+        const servedMetricLabel = timeMode === 'current'
+          ? `People served (${snapLabel || 'Selected month'})`
+          : 'All time people served'
+        const isFutureSelectedDay = (() => {
+          const sd = selectedDate instanceof Date && !Number.isNaN(selectedDate.getTime()) ? selectedDate : new Date()
+          const now = new Date()
+          const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0)
+          const sel0 = new Date(sd.getFullYear(), sd.getMonth(), sd.getDate(), 0, 0, 0, 0)
+          return sel0.getTime() > today0.getTime()
+        })()
+        const showForecast = timeMode === 'current' && Number.isFinite(served)
 
         while (Math.abs(e.lngLat.lng - coords[0]) > 180) {
           coords[0] += e.lngLat.lng > coords[0] ? 360 : -360
         }
 
-        new mapLib.current.Popup({ closeButton: true, maxWidth: '300px', className: 'popup-health' })
+        const popup = new mapLib.current.Popup({ closeButton: true, maxWidth: '300px', className: 'popup-health' })
           .setLngLat(coords)
           .setHTML(`
             <div style="font-size:12px;line-height:1.4;color:rgba(255,255,255,0.9);min-width:220px">
@@ -2150,12 +2169,74 @@ export default function RiskMapView() {
               <div style="font-weight:600;font-size:13px;color:#fff;margin-bottom:10px;line-height:1.3">
                 ${p.category || 'Service category'}
               </div>
-              <div style="padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:rgba(0,0,0,0.25);color:rgba(255,255,255,0.8);font-size:12px">
-                People served <strong style="color:#fff">${servedLabel}</strong>
-              </div>
+              ${!(isFutureSelectedDay && timeMode === 'current') ? `
+                <div style="padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:rgba(0,0,0,0.25);color:rgba(255,255,255,0.8);font-size:12px">
+                  ${servedMetricLabel} <strong style="color:#fff">${servedLabel}</strong>
+                </div>
+              ` : ''}
+              ${showForecast ? `
+                <div style="margin-top:6px;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:rgba(0,0,0,0.18);color:rgba(255,255,255,0.75);font-size:12px">
+                  ${isFutureSelectedDay ? 'Forecast (selected day)' : 'Next 16 days forecast'} · <span style="opacity:0.75">Loading…</span>
+                </div>
+              ` : ''}
             </div>
           `)
           .addTo(map.current)
+
+        if (showForecast) {
+          ;(async () => {
+            try {
+              if (isFutureSelectedDay) {
+                const daily = await getPhoenixDailyHeatDemandFactors({ lat: coords[1], lng: coords[0], days: 16 })
+                const picked = pickDailyFactorForSelectedDate(daily, selectedDate)
+                const dayFactor = picked?.factor
+                if (!Number.isFinite(dayFactor)) return
+                const sd = selectedDate instanceof Date && !Number.isNaN(selectedDate.getTime()) ? selectedDate : new Date()
+                const daysInMonth = new Date(sd.getFullYear(), sd.getMonth() + 1, 0).getDate()
+                const baselinePerDay = Number(served) / Math.max(1, daysInMonth)
+                const forecast = Math.round(baselinePerDay * dayFactor)
+                const tempLabel = Number.isFinite(picked?.tMaxF) ? ` · ${Math.round(picked.tMaxF)}°F` : ''
+                popup.setHTML(`
+                  <div style="font-size:12px;line-height:1.4;color:rgba(255,255,255,0.9);min-width:220px">
+                    <div style="font-size:10px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:rgba(255,255,255,0.42);margin-bottom:6px">
+                      Homelessness services
+                    </div>
+                    <div style="font-weight:600;font-size:13px;color:#fff;margin-bottom:10px;line-height:1.3">
+                      ${p.category || 'Service category'}
+                    </div>
+                    <div style="padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:rgba(0,0,0,0.18);color:rgba(255,255,255,0.8);font-size:12px">
+                      Forecast (selected day)${tempLabel} · <strong style="color:#fff">${forecast.toLocaleString()}</strong>
+                    </div>
+                  </div>
+                `)
+                return
+              }
+
+              const mult = await getPhoenix16DayHeatDemandMultiplier({ lat: coords[1], lng: coords[0], days: 16 })
+              if (!mult?.sumFactor || !Number.isFinite(mult.sumFactor)) return
+              const sd = selectedDate instanceof Date && !Number.isNaN(selectedDate.getTime()) ? selectedDate : new Date()
+              const daysInMonth = new Date(sd.getFullYear(), sd.getMonth() + 1, 0).getDate()
+              const baselinePerDay = Number(served) / Math.max(1, daysInMonth)
+              const forecast = Math.round(baselinePerDay * mult.sumFactor)
+              popup.setHTML(`
+                <div style="font-size:12px;line-height:1.4;color:rgba(255,255,255,0.9);min-width:220px">
+                  <div style="font-size:10px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:rgba(255,255,255,0.42);margin-bottom:6px">
+                    Homelessness services
+                  </div>
+                  <div style="font-weight:600;font-size:13px;color:#fff;margin-bottom:10px;line-height:1.3">
+                    ${p.category || 'Service category'}
+                  </div>
+                  <div style="padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:rgba(0,0,0,0.25);color:rgba(255,255,255,0.8);font-size:12px">
+                    ${servedMetricLabel} <strong style="color:#fff">${servedLabel}</strong>
+                  </div>
+                  <div style="margin-top:6px;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:rgba(0,0,0,0.18);color:rgba(255,255,255,0.8);font-size:12px">
+                    Next 16 days forecast · <strong style="color:#fff">${forecast.toLocaleString()}</strong>
+                  </div>
+                </div>
+              `)
+            } catch {}
+          })()
+        }
       }
       map.current.on('click', 'phoenix-homelessness-synthetic-points', showPhoenixHomelessnessSyntheticPopup)
       map.current.on('click', 'phoenix-homelessness-unclustered', showPhoenixHomelessnessSyntheticPopup)
@@ -2186,27 +2267,76 @@ export default function RiskMapView() {
           .replace(/>/g, '&gt;')
           .replace(/"/g, '&quot;')
         const isAllHistorical = String(p.coolingTimeMode || '') === 'all_historical'
+        const isFutureSelectedDay = (() => {
+          const sd = selectedDate instanceof Date && !Number.isNaN(selectedDate.getTime()) ? selectedDate : new Date()
+          const now = new Date()
+          const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0)
+          const sel0 = new Date(sd.getFullYear(), sd.getMonth(), sd.getDate(), 0, 0, 0, 0)
+          return sel0.getTime() > today0.getTime()
+        })()
+        const showForecast = !isAllHistorical && Number.isFinite(vc)
         const periodLine = isAllHistorical
           ? `Recorded period · ${esc(weekLabel)}`
           : `Reporting week · ${esc(weekLabel)}`
         const visitsLine = isAllHistorical
           ? `Visits (all recorded) · <span style="color:#5eead4">${visitsLabel}</span>`
           : `Visits (reporting week) · <span style="color:#5eead4">${visitsLabel}</span>`
-        new mapLib.current.Popup({ closeButton: true, maxWidth: '300px', className: 'popup-311' })
+        const popup = new mapLib.current.Popup({ closeButton: true, maxWidth: '300px', className: 'popup-311' })
           .setLngLat(coords)
           .setHTML(`
             <div style="font-size:12px;line-height:1.45;color:rgba(255,255,255,0.92);min-width:200px">
               <div style="font-weight:700;margin-bottom:6px;color:#fff">${esc(name)}</div>
               ${addr ? `<div style="opacity:0.88;margin-bottom:4px">${esc(addr)}</div>` : ''}
               ${dist ? `<div style="opacity:0.75;font-size:11px;margin-bottom:6px">District ${esc(dist)}</div>` : ''}
-              <div style="font-size:11px;opacity:0.85;margin-bottom:6px;border-top:1px solid rgba(255,255,255,0.1);padding-top:6px">
-                ${periodLine}
-              </div>
-              <div style="font-size:12px;font-weight:600">${visitsLine}</div>
+              ${!(isFutureSelectedDay && !isAllHistorical) ? `
+                <div style="font-size:11px;opacity:0.85;margin-bottom:6px;border-top:1px solid rgba(255,255,255,0.1);padding-top:6px">
+                  ${periodLine}
+                </div>
+                <div style="font-size:12px;font-weight:600">${visitsLine}</div>
+              ` : ''}
               ${capLabel ? `<div style="margin-top:4px;font-size:11px;opacity:0.85">Capacity (est.) · <span style="font-weight:700;color:#fff">${capLabel}</span> people</div>` : ''}
+              ${showForecast ? `<div style="margin-top:6px;font-size:11px;opacity:0.8">${isFutureSelectedDay ? 'Forecast (selected day)' : 'Next 16 days forecast'} · <span style="opacity:0.75">Loading…</span></div>` : ''}
             </div>
           `)
           .addTo(map.current)
+
+        if (showForecast) {
+          ;(async () => {
+            try {
+              const baselinePerDay = Number(vc) / 7
+              let forecast = null
+              let tempLabel = ''
+              if (isFutureSelectedDay) {
+                const daily = await getPhoenixDailyHeatDemandFactors({ lat: coords[1], lng: coords[0], days: 16 })
+                const picked = pickDailyFactorForSelectedDate(daily, selectedDate)
+                const dayFactor = picked?.factor
+                if (!Number.isFinite(dayFactor)) return
+                forecast = Math.round(baselinePerDay * dayFactor)
+                tempLabel = Number.isFinite(picked?.tMaxF) ? ` · ${Math.round(picked.tMaxF)}°F` : ''
+              } else {
+                const mult = await getPhoenix16DayHeatDemandMultiplier({ lat: coords[1], lng: coords[0], days: 16 })
+                if (!mult?.sumFactor || !Number.isFinite(mult.sumFactor)) return
+                forecast = Math.round(baselinePerDay * mult.sumFactor)
+              }
+              if (!Number.isFinite(forecast)) return
+              popup.setHTML(`
+                <div style="font-size:12px;line-height:1.45;color:rgba(255,255,255,0.92);min-width:200px">
+                  <div style="font-weight:700;margin-bottom:6px;color:#fff">${esc(name)}</div>
+                  ${addr ? `<div style="opacity:0.88;margin-bottom:4px">${esc(addr)}</div>` : ''}
+                  ${dist ? `<div style="opacity:0.75;font-size:11px;margin-bottom:6px">District ${esc(dist)}</div>` : ''}
+                  ${!(isFutureSelectedDay && !isAllHistorical) ? `
+                    <div style="font-size:11px;opacity:0.85;margin-bottom:6px;border-top:1px solid rgba(255,255,255,0.1);padding-top:6px">
+                      ${periodLine}
+                    </div>
+                    <div style="font-size:12px;font-weight:600">${visitsLine}</div>
+                  ` : ''}
+                  ${capLabel ? `<div style="margin-top:4px;font-size:11px;opacity:0.85">Capacity (est.) · <span style="font-weight:700;color:#fff">${capLabel}</span> people</div>` : ''}
+                  <div style="margin-top:6px;font-size:11px;opacity:0.9">${isFutureSelectedDay ? `Forecast (selected day)${tempLabel}` : 'Next 16 days forecast'} · <span style="font-weight:700;color:#fff">${forecast.toLocaleString()}</span></div>
+                </div>
+              `)
+            } catch {}
+          })()
+        }
       })
 
       // Click homelessness cluster -> zoom
@@ -4131,12 +4261,56 @@ export default function RiskMapView() {
     }
 
         // Build derived FeatureCollection with a normalized csScore for styling.
+        // For district capacity in Current Time, color by forecasted next-16-days totals (so RAG responds to forecasting).
+        const ccTimeMode = String(phoenixCoolingCentersTimeMode || 'all_historical')
+        const hTimeMode = String(phoenixHomelessnessTimeModeRef.current || 'all_historical')
+        const useForecastForColor = mode === 'district_capacity' && (
+          (phoenixCoolingCentersVisible && ccTimeMode === 'current') ||
+          (phoenixHomelessnessVisible && hTimeMode === 'current')
+        )
+
+        const dailyByDistrict = new Map()
+        if (useForecastForColor) {
+          const districts = baseDistricts.features || []
+          await Promise.all(districts.map(async (f) => {
+            const id = String(f?.properties?.OBJECTID ?? f?.id ?? '')
+            if (!id) return
+            const c = getPolygonCentroidLngLat(f) || getGeojsonFeatureCenter(f)
+            if (!Array.isArray(c) || c.length < 2) return
+            const lng = Number(c[0]); const lat = Number(c[1])
+            if (!Number.isFinite(lng) || !Number.isFinite(lat)) return
+            const daily = await getPhoenixDailyHeatDemandFactors({ lat, lng, days: 16 })
+            if (!daily?.days?.length) return
+            dailyByDistrict.set(id, daily)
+          }))
+        }
+
         const values = []
         for (const id of districtIds) {
-          const v = mode === 'district_capacity'
-            ? (phoenixCoolingCentersVisible ? (ccVisits.get(id) || 0) : 0) + (phoenixHomelessnessVisible ? (homelessServedEst.get(id) || 0) : 0)
-            : (phoenixCoolingCentersVisible ? (ccCount.get(id) || 0) : 0) + (phoenixHomelessnessVisible ? (homelessCount.get(id) || 0) : 0)
-          values.push(v)
+          if (mode === 'district_capacity') {
+            const ccV = phoenixCoolingCentersVisible ? (ccVisits.get(id) || 0) : 0
+            const hS = phoenixHomelessnessVisible ? (homelessServedEst.get(id) || 0) : 0
+            if (useForecastForColor) {
+              const picked = pickDailyFactorForSelectedDate(dailyByDistrict.get(id), selectedDate)
+              const dayFactor = picked?.factor
+              const ccForecast = (phoenixCoolingCentersVisible && ccTimeMode === 'current' && Number.isFinite(ccV) && Number.isFinite(dayFactor))
+                ? (Number(ccV) / 7) * dayFactor
+                : Number(ccV)
+              const daysInMonth = (() => {
+                const sd = selectedDate instanceof Date && !Number.isNaN(selectedDate.getTime()) ? selectedDate : new Date()
+                return new Date(sd.getFullYear(), sd.getMonth() + 1, 0).getDate()
+              })()
+              const hForecast = (phoenixHomelessnessVisible && hTimeMode === 'current' && Number.isFinite(hS) && Number.isFinite(dayFactor))
+                ? (Number(hS) / Math.max(1, daysInMonth)) * dayFactor
+                : Number(hS)
+              values.push((ccForecast || 0) + (hForecast || 0))
+            } else {
+              values.push(ccV + hS)
+            }
+          } else {
+            const v = (phoenixCoolingCentersVisible ? (ccCount.get(id) || 0) : 0) + (phoenixHomelessnessVisible ? (homelessCount.get(id) || 0) : 0)
+            values.push(v)
+          }
         }
         const maxV = Math.max(0, ...values)
 
@@ -4149,9 +4323,26 @@ export default function RiskMapView() {
             const hC = homelessCount.get(objectId) || 0
             const ccV = ccVisits.get(objectId) || 0
             const hS = homelessServedEst.get(objectId) || 0
-            const valueForColor = mode === 'district_capacity'
+            let ccForecast16 = null
+            let hForecast16 = null
+            let valueForColor = mode === 'district_capacity'
               ? (phoenixCoolingCentersVisible ? ccV : 0) + (phoenixHomelessnessVisible ? hS : 0)
               : (phoenixCoolingCentersVisible ? ccC : 0) + (phoenixHomelessnessVisible ? hC : 0)
+            if (useForecastForColor && mode === 'district_capacity') {
+              const picked = pickDailyFactorForSelectedDate(dailyByDistrict.get(objectId), selectedDate)
+              const dayFactor = picked?.factor
+              if (phoenixCoolingCentersVisible && ccTimeMode === 'current' && Number.isFinite(ccV) && Number.isFinite(dayFactor)) {
+                ccForecast16 = Math.round((Number(ccV) / 7) * dayFactor)
+              }
+              if (phoenixHomelessnessVisible && hTimeMode === 'current' && Number.isFinite(hS) && Number.isFinite(dayFactor)) {
+                const sd = selectedDate instanceof Date && !Number.isNaN(selectedDate.getTime()) ? selectedDate : new Date()
+                const daysInMonth = new Date(sd.getFullYear(), sd.getMonth() + 1, 0).getDate()
+                hForecast16 = Math.round((Number(hS) / Math.max(1, daysInMonth)) * dayFactor)
+              }
+              const ccUse = Number.isFinite(ccForecast16) ? ccForecast16 : (phoenixCoolingCentersVisible ? ccV : 0)
+              const hUse = Number.isFinite(hForecast16) ? hForecast16 : (phoenixHomelessnessVisible ? hS : 0)
+              valueForColor = ccUse + hUse
+            }
             const score = maxV > 0 ? (valueForColor / maxV) : 0
             const byCat = Array.from((homelessByCat.get(objectId) || new Map()).entries())
               .sort((a, b) => b[1] - a[1])
@@ -4166,6 +4357,16 @@ export default function RiskMapView() {
                 csHomelessCount: hC,
                 csCoolingVisits: Math.round(ccV),
                 csHomelessServedEst: Math.round(hS),
+                csCoolingForecast16: Number.isFinite(ccForecast16) ? ccForecast16 : null,
+                csHomelessForecast16: Number.isFinite(hForecast16) ? hForecast16 : null,
+                csForecastDayFactor: (() => {
+                  const picked = useForecastForColor ? pickDailyFactorForSelectedDate(dailyByDistrict.get(objectId), selectedDate) : null
+                  return picked && Number.isFinite(picked.factor) ? Number(picked.factor) : null
+                })(),
+                csForecastDayTempF: (() => {
+                  const picked = useForecastForColor ? pickDailyFactorForSelectedDate(dailyByDistrict.get(objectId), selectedDate) : null
+                  return picked && Number.isFinite(picked.tMaxF) ? Number(picked.tMaxF) : null
+                })(),
                 csHomelessByCategoryJson: JSON.stringify(byCat),
                 csAsOfLabel: snap?.periodLabel || null,
               },
@@ -4219,6 +4420,13 @@ export default function RiskMapView() {
     const onLeave = () => clearHover()
 
     const onClick = (e) => {
+      // If a point is clickable at this pixel, prefer point popup over district popup.
+      // MapLibre will fire click handlers for multiple layers at the same point.
+      try {
+        const hits = map.current.queryRenderedFeatures(e.point, { layers: ['phoenix-cooling-centers-points', 'phoenix-homelessness-synthetic-points'] })
+        if (hits?.length) return
+      } catch {}
+
       const f = e.features?.[0]
       if (!f) return
       const id = String(f?.properties?.OBJECTID ?? f?.id ?? '')
@@ -4245,7 +4453,17 @@ export default function RiskMapView() {
       const hCount = Number(p.csHomelessCount || 0)
       const ccVisits = Number(p.csCoolingVisits || 0)
       const hServed = Number(p.csHomelessServedEst || 0)
+      const ccForecast16 = Number(p.csCoolingForecast16)
+      const hForecast16 = Number(p.csHomelessForecast16)
+      const dayTempF = Number(p.csForecastDayTempF)
       const asOfLabel = String(p.csAsOfLabel || '').trim()
+      const isFutureSelectedDay = (() => {
+        const sd = selectedDate instanceof Date && !Number.isNaN(selectedDate.getTime()) ? selectedDate : new Date()
+        const now = new Date()
+        const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0)
+        const sel0 = new Date(sd.getFullYear(), sd.getMonth(), sd.getDate(), 0, 0, 0, 0)
+        return sel0.getTime() > today0.getTime()
+      })()
 
       let byCat = []
       try { byCat = JSON.parse(p.csHomelessByCategoryJson || '[]') } catch { byCat = [] }
@@ -4258,10 +4476,25 @@ export default function RiskMapView() {
 
       const lines = []
       if (mode === 'district_capacity') {
-        if (phoenixCoolingCentersVisible) lines.push(`<div><strong>Cooling centers</strong> · ${Number.isFinite(ccVisits) ? ccVisits.toLocaleString() : '—'} visits</div>`)
+        const ccMode = String(phoenixCoolingCentersTimeMode || 'all_historical')
+        if (phoenixCoolingCentersVisible) {
+          if (ccMode === 'current' && Number.isFinite(ccForecast16)) {
+            lines.push(`<div><strong>Cooling Centers Forecasting:</strong> ${ccForecast16.toLocaleString()} visits</div>`)
+          } else if (Number.isFinite(ccVisits)) {
+            lines.push(`<div><strong>Cooling Centers Forecasting:</strong> ${ccVisits.toLocaleString()} visits</div>`)
+          } else {
+            lines.push(`<div><strong>Cooling Centers Forecasting:</strong> — visits</div>`)
+          }
+        }
         if (phoenixHomelessnessVisible) {
-          const servedStr = Number.isFinite(hServed) ? hServed.toLocaleString() : '—'
-          lines.push(`<div><strong>Homelessness services</strong> · ${servedStr} people served${asOfLabel ? ` <span style="opacity:0.75">(as of ${esc(asOfLabel)})</span>` : ''}</div>`)
+          const hMode = String(phoenixHomelessnessTimeModeRef.current || 'all_historical')
+          if (hMode === 'current' && Number.isFinite(hForecast16)) {
+            lines.push(`<div><strong>Homelessness Services Forecasting:</strong> ${hForecast16.toLocaleString()} people served</div>`)
+          } else if (Number.isFinite(hServed)) {
+            lines.push(`<div><strong>Homelessness Services Forecasting:</strong> ${hServed.toLocaleString()} people served</div>`)
+          } else {
+            lines.push(`<div><strong>Homelessness Services Forecasting:</strong> — people served</div>`)
+          }
         }
       } else {
         if (phoenixCoolingCentersVisible) lines.push(`<div><strong>Cooling centers</strong> · ${Number.isFinite(ccCount) ? ccCount.toLocaleString() : '—'}</div>`)
@@ -4295,6 +4528,8 @@ export default function RiskMapView() {
           </div>
         `)
         .addTo(map.current)
+
+      // Forecast lines are now computed into district properties so colors + tooltip stay consistent.
 
       phoenixCityServicesPopup.current.on('close', () => {
         const sel = phoenixCityServicesSelectedId.current

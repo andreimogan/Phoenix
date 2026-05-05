@@ -14,7 +14,7 @@ import { geocodeQueue, getCachedGeocodeByNormalized } from '../utils/locationIq'
 import callsForServiceSeedUrl from '../../External Datasets/calls-for-service_2026-calls-for-service_callsforsrvc2026.csv?url'
 import cfsGeocodes from '../data/callsForServiceGeocodes.json'
 import phoenixHomelessnessSeedUrl from '../../External Datasets/PhoenixHomelesness.csv?url'
-import { getPhoenixHomelessnessSnapshot, parsePhoenixHomelessnessCsv } from '../utils/phoenixHomelessness'
+import { getPhoenixHomelessnessAllTimeSnapshot, getPhoenixHomelessnessMonthSnapshot, parsePhoenixHomelessnessCsv } from '../utils/phoenixHomelessness'
 import phoenixVillagesUrl from '../../External Datasets/Villages.geojson?url'
 import phoenixCouncilDistrictsUrl from '../../External Datasets/Phoenix_Council_District.geojson?url'
 import phoenixHeatDeathsByVillage from '../data/phoenixHeatDeathsByVillage.json'
@@ -296,6 +296,8 @@ export const PanelProvider = ({ children }) => {
   const [phoenixHomelessnessSnapshot, setPhoenixHomelessnessSnapshot] = useState(null)
   const [phoenixHomelessnessMeta, setPhoenixHomelessnessMeta] = useState({ status: 'ready', message: null })
   const [phoenixHomelessnessCategoryEnabled, setPhoenixHomelessnessCategoryEnabled] = useState({}) // { [CATEGORY]: boolean }
+  // Homelessness served totals: 'current' = month aligned to calendar; 'all_historical' = all-time (latest cumulative).
+  const [phoenixHomelessnessTimeMode, setPhoenixHomelessnessTimeMode] = useState('all_historical')
   const [phoenixHomelessnessAffectedNeighborhoodsVisible, setPhoenixHomelessnessAffectedNeighborhoodsVisible] = useState(false)
   const [phoenixTemperatureNeighborhoodsVisible, setPhoenixTemperatureNeighborhoodsVisible] = useState(false)
   const [phoenixTemperatureNeighborhoodsLabelsVisible, setPhoenixTemperatureNeighborhoodsLabelsVisible] = useState(true)
@@ -363,7 +365,7 @@ export const PanelProvider = ({ children }) => {
   // Cooling centers overlay geometry: show district/village density choropleths, or none (points only).
   const [phoenixCoolingCentersGeoView, setPhoenixCoolingCentersGeoView] = useState('districts') // 'none' | 'districts' | 'villages'
   // Cooling centers visit totals: 'current' = week aligned to calendar (like Heat Illnesses); 'all_historical' = sum all rows in workbook.
-  const [phoenixCoolingCentersTimeMode, setPhoenixCoolingCentersTimeMode] = useState('current')
+  const [phoenixCoolingCentersTimeMode, setPhoenixCoolingCentersTimeMode] = useState('all_historical')
   // City Services overlay selector (shared map option for Cooling + Homelessness).
   // 'none' = dots only, no district overlay; 'districts_distribution' = count of enabled service locations by district;
   // 'district_capacity' = district totals (cooling visits + homelessness served/capacity when available).
@@ -748,7 +750,9 @@ export const PanelProvider = ({ children }) => {
         const rows = parsePhoenixHomelessnessCsv(csvText)
         if (cancelled) return
         setPhoenixHomelessnessRows(rows)
-        const snap = getPhoenixHomelessnessSnapshot(rows, selectedDate)
+        const snap = phoenixHomelessnessTimeMode === 'current'
+          ? getPhoenixHomelessnessMonthSnapshot(rows, selectedDate)
+          : getPhoenixHomelessnessAllTimeSnapshot(rows)
         setPhoenixHomelessnessSnapshot(snap)
         setPhoenixHomelessnessCategoryEnabled((prev) => {
           if (prev && Object.keys(prev).length) return prev
@@ -769,7 +773,7 @@ export const PanelProvider = ({ children }) => {
 
     run()
     return () => { cancelled = true }
-  }, [selectedCity])
+  }, [selectedCity, phoenixHomelessnessTimeMode, selectedDate])
 
   // Initialize synthetic heat illness toggles (Phoenix only; from bundled JSON)
   useEffect(() => {
@@ -788,8 +792,12 @@ export const PanelProvider = ({ children }) => {
   useEffect(() => {
     if (selectedCity !== 'phoenix') return
     if (!phoenixHomelessnessRows?.length) return
-    setPhoenixHomelessnessSnapshot(getPhoenixHomelessnessSnapshot(phoenixHomelessnessRows, selectedDate))
-  }, [selectedDate, selectedCity, phoenixHomelessnessRows])
+    setPhoenixHomelessnessSnapshot(
+      phoenixHomelessnessTimeMode === 'current'
+        ? getPhoenixHomelessnessMonthSnapshot(phoenixHomelessnessRows, selectedDate)
+        : getPhoenixHomelessnessAllTimeSnapshot(phoenixHomelessnessRows)
+    )
+  }, [selectedDate, selectedCity, phoenixHomelessnessRows, phoenixHomelessnessTimeMode])
 
   // AI chat actions
   const clearChat = () => setChatMessages([])
@@ -1217,6 +1225,8 @@ export const PanelProvider = ({ children }) => {
     phoenixHomelessnessMeta,
     phoenixHomelessnessCategoryEnabled,
     setPhoenixHomelessnessCategoryEnabled,
+    phoenixHomelessnessTimeMode,
+    setPhoenixHomelessnessTimeMode,
     phoenixHomelessnessAffectedNeighborhoodsVisible,
     setPhoenixHomelessnessAffectedNeighborhoodsVisible,
     phoenixTemperatureNeighborhoodsVisible,

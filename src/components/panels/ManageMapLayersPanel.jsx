@@ -180,6 +180,8 @@ export default function ManageMapLayersPanel() {
     phoenixHomelessnessMeta,
     phoenixHomelessnessCategoryEnabled,
     setPhoenixHomelessnessCategoryEnabled,
+    phoenixHomelessnessTimeMode,
+    setPhoenixHomelessnessTimeMode,
     phoenixHomelessnessAffectedNeighborhoodsVisible,
     setPhoenixHomelessnessAffectedNeighborhoodsVisible,
     phoenixTemperatureNeighborhoodsVisible,
@@ -2467,6 +2469,9 @@ export default function ManageMapLayersPanel() {
                                               {' · '}
                                               {phoenixCoolingWeekSummary.mappedLocationCount} dots on map
                                             </div>
+                                            <div className="mt-1 opacity-75" style={{ fontSize: 10 }}>
+                                              Next 16 days forecast (planning estimate) is available on the map tooltips.
+                                            </div>
                                           </>
                                         )}
                                       </div>
@@ -2505,8 +2510,18 @@ export default function ManageMapLayersPanel() {
                                           : status === 'error'
                                             ? 'CSV load error'
                                             : snapshotLabel
-                                              ? `Latest ≤ selected date: ${snapshotLabel}`
-                                              : 'No data available for selected date'}
+                                              ? (String(phoenixHomelessnessTimeMode || 'all_historical') === 'current'
+                                                ? `People served (${snapshotLabel})`
+                                                : (() => {
+                                                  const asOfMs = phoenixHomelessnessSnapshot?.periodMs
+                                                  const asOfLabel = asOfMs
+                                                    ? new Date(asOfMs).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                                                    : null
+                                                  return asOfLabel ? `All time (as of ${asOfLabel})` : 'All time'
+                                                })())
+                                              : (String(phoenixHomelessnessTimeMode || 'all_historical') === 'current'
+                                                ? 'No data available for selected month'
+                                                : 'No data available')}
                                       </div>
                                     </div>
                                   </div>
@@ -2536,6 +2551,70 @@ export default function ManageMapLayersPanel() {
 
                               {expandedPhoenixHomelessness && categories.length > 0 && (
                                 <div className="space-y-1 ml-3">
+                                  <div
+                                    className="rounded-md border px-2 py-2 space-y-1"
+                                    style={{ borderColor: 'var(--color-gray-700)', background: 'rgba(255, 255, 255, 0.02)' }}
+                                  >
+                                    <div className="text-[10px] font-semibold uppercase tracking-wide opacity-90" style={{ color: 'var(--color-gray-400)' }}>
+                                      Time
+                                    </div>
+                                    <div className="flex items-center gap-1 flex-wrap">
+                                      <button
+                                        type="button"
+                                        className="text-[11px] px-2 py-1 rounded-md border"
+                                        style={segmentedBtnStyle(String(phoenixHomelessnessTimeMode || 'all_historical') === 'current')}
+                                        onClick={() => setPhoenixHomelessnessTimeMode('current')}
+                                      >
+                                        Current Time
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="text-[11px] px-2 py-1 rounded-md border"
+                                        style={segmentedBtnStyle(String(phoenixHomelessnessTimeMode || 'all_historical') === 'all_historical')}
+                                        onClick={() => setPhoenixHomelessnessTimeMode('all_historical')}
+                                      >
+                                        Aggregated Data
+                                      </button>
+                                    </div>
+
+                                    {phoenixHomelessnessSnapshot ? (
+                                      <div className="rounded-md border px-2 py-2 text-[10px] leading-snug mt-1"
+                                        style={{ borderColor: 'rgba(234,179,8,0.35)', background: 'rgba(234,179,8,0.06)', color: 'var(--color-gray-300)' }}
+                                      >
+                                        {String(phoenixHomelessnessTimeMode || 'all_historical') === 'current' ? (
+                                          <>
+                                            <div className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: 'rgba(234,179,8,0.95)' }}>
+                                              People served (month)
+                                            </div>
+                                            <div className="mt-1" style={{ color: 'var(--color-gray-200)' }}>
+                                              {phoenixHomelessnessSnapshot.periodLabel}
+                                            </div>
+                                            <div className="mt-1 opacity-90">
+                                              {Array.from(snapshotValuesByCategory.values()).reduce((a, b) => a + (Number.isFinite(b) ? Number(b) : 0), 0).toLocaleString()} people served
+                                            </div>
+                                            <div className="mt-1 opacity-75" style={{ fontSize: 10 }}>
+                                              Next 16 days forecast (planning estimate) is available on the map tooltips.
+                                            </div>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <div className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: 'rgba(234,179,8,0.95)' }}>
+                                              All time people served
+                                            </div>
+                                            <div className="mt-1" style={{ color: 'var(--color-gray-200)' }}>
+                                              As of {phoenixHomelessnessSnapshot.periodMs
+                                                ? new Date(phoenixHomelessnessSnapshot.periodMs).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                                                : '—'}
+                                            </div>
+                                            <div className="mt-1 opacity-90">
+                                              {Array.from(snapshotValuesByCategory.values()).reduce((a, b) => a + (Number.isFinite(b) ? Number(b) : 0), 0).toLocaleString()} people served
+                                            </div>
+                                          </>
+                                        )}
+                                      </div>
+                                    ) : null}
+                                  </div>
+
                                   {categories.map((catName) => {
                                     const isOn = phoenixHomelessnessCategoryEnabled?.[catName] !== false
                                     const served = snapshotValuesByCategory.has(catName) ? snapshotValuesByCategory.get(catName) : null

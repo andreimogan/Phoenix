@@ -7,6 +7,7 @@ import PerformancePage from './components/PerformancePage'
 import AlertsPanel from './components/AlertsPanel'
 import ForecastingPanel from './components/ForecastingPanel'
 import OverlayColumns from './components/OverlayColumns'
+import AlertActionDialog from './components/AlertActionDialog'
 import {
   WaterOSCopilotPanel,
   ManageMapLayersPanel,
@@ -85,6 +86,7 @@ function AppContent() {
         <SuccessNotifications />
         <WaterOSCopilotPanel />
         <ManageMapLayersPanel />
+        <AlertActionDialog />
         
         {/* Action Panels */}
         <AlertsPanel />

@@ -32,6 +32,7 @@ import {
 import { getPhoenixDistrictTempsCache, isForecastStale, setPhoenixDistrictTempsCache } from '../utils/phoenixDistrictTempsCache'
 import { ensurePhoenixSituationalLayers, applyPhoenixSituationalLayers } from '../utils/phoenixSituationalAwarenessLayers'
 import { getPhoenixDailyHeatDemandFactors, pickDailyFactorForSelectedDate, getPhoenix16DayHeatDemandMultiplier } from '../utils/phoenixServicesForecast'
+import { bboxFromGeojson, bboxFromGeojsonGeometry, buildHotspotIsobandsGeojson, buildSeedPointsFromDistrictTotals, computeHeatIllnessTotalsByDistrict, estimateCasesNearPeak, findTop3HotspotPeaks } from '../utils/phoenixHeatAlerts'
 
 function getGeojsonFeatureCenter(feature) {
   // Cheap center: bbox midpoint of all coordinates
@@ -449,6 +450,11 @@ export default function RiskMapView() {
     setHealthOverdoseData,
     setHealthNaloxoneData,
     setHealthDataYear,
+    activeActionTab,
+    phoenixHeatAlertsSelection,
+    setPhoenixHeatAlertsSelection,
+    setPhoenixHeatAlertsDialogOpen,
+    phoenixHeatAlertsRedirectTarget,
   } = usePanelContext()
   const mapContainer = useRef(null)
   const basemapPaintOriginalRef = useRef(null) // Map(layerId -> Map(paintProp -> originalValue))
@@ -483,6 +489,9 @@ export default function RiskMapView() {
   const phoenixCityServicesPopup = useRef(null)
   const phoenixCityServicesHoverId = useRef(null)
   const phoenixCityServicesSelectedId = useRef(null)
+  const phoenixHeatAlertsTooltipMarkersRef = useRef([]) // Array<maplibre Marker>
+  const phoenixHeatAlertsPulseRafRef = useRef(null)
+  const phoenixHeatAlertsRouteRafRef = useRef(null)
   const phoenixHomelessnessSnapshotRef = useRef(null)
   const phoenixHomelessnessTimeModeRef = useRef('all_historical')
   const phoenixHomelessnessCategoryEnabledRef = useRef({})
@@ -793,6 +802,33 @@ export default function RiskMapView() {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] },
         promoteId: 'OBJECTID',
+      })
+
+      // Phoenix heat alerts (Phase 1): seed points + heatmap + peak markers
+      map.current.addSource('phoenix-heat-alerts-seed-points', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      })
+      map.current.addSource('phoenix-heat-alerts-isobands', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      })
+      map.current.addSource('phoenix-heat-alerts-route-line', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      })
+      map.current.addSource('phoenix-heat-alerts-route-arrows', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      })
+      map.current.addSource('phoenix-heat-alerts-route-dot', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      })
+      map.current.addSource('phoenix-heat-alerts-peaks', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+        promoteId: 'id',
       })
 
       // Phoenix villages colored by heat deaths (example metric; derived)
@@ -1135,6 +1171,170 @@ export default function RiskMapView() {
             ],
           ],
           'fill-opacity': 0.85,
+        },
+        layout: { visibility: 'none' },
+      }, firstSymbolId)
+
+      // Phoenix Alerts: isobands (area heatmap) + peak markers
+      map.current.addLayer({
+        id: 'phoenix-heat-alerts-isobands-fill',
+        type: 'fill',
+        source: 'phoenix-heat-alerts-isobands',
+        filter: ['>=', ['to-number', ['get', 'band']], 2],
+        paint: {
+          'fill-color': [
+            'match',
+            ['get', 'band'],
+            2, 'rgba(248, 113, 113, 0.40)',
+            3, 'rgba(239, 68, 68, 0.55)',
+            'rgba(0,0,0,0)',
+          ],
+          'fill-opacity': 1,
+        },
+        layout: { visibility: 'none' },
+      }, firstSymbolId)
+
+      // Phoenix Alerts: redirect route + animated arrows
+      map.current.addLayer({
+        id: 'phoenix-heat-alerts-route-line',
+        type: 'line',
+        source: 'phoenix-heat-alerts-route-line',
+        paint: {
+          'line-color': 'rgba(255,255,255,0.82)',
+          'line-width': 3,
+          'line-opacity': 0.85,
+        },
+        layout: { visibility: 'none' },
+      }, firstSymbolId)
+
+      map.current.addLayer({
+        id: 'phoenix-heat-alerts-route-arrows',
+        type: 'symbol',
+        source: 'phoenix-heat-alerts-route-arrows',
+        layout: {
+          'symbol-placement': 'point',
+          visibility: 'none',
+          'text-field': '➤',
+          'text-size': 16,
+          'text-allow-overlap': true,
+          'text-ignore-placement': true,
+          'text-rotation-alignment': 'map',
+          'text-pitch-alignment': 'map',
+          'text-rotate': ['coalesce', ['to-number', ['get', 'bearing']], 0],
+        },
+        paint: {
+          'text-color': ['coalesce', ['get', 'color'], 'rgba(255,255,255,0.92)'],
+          'text-halo-color': 'rgba(0,0,0,0.6)',
+          'text-halo-width': 1.5,
+          'text-opacity': 0.95,
+        },
+      }, firstSymbolId)
+
+      map.current.addLayer({
+        id: 'phoenix-heat-alerts-route-dot',
+        type: 'circle',
+        source: 'phoenix-heat-alerts-route-dot',
+        paint: {
+          'circle-color': ['coalesce', ['get', 'color'], 'rgba(34, 197, 94, 0.95)'],
+          'circle-radius': 4,
+          'circle-opacity': 1,
+          'circle-stroke-color': 'rgba(0,0,0,0.45)',
+          'circle-stroke-width': 1,
+        },
+        layout: { visibility: 'none' },
+      }, firstSymbolId)
+
+      // Legacy circular heatmap (kept but hidden; replaced by isobands)
+      map.current.addLayer({
+        id: 'phoenix-heat-alerts-heatmap',
+        type: 'heatmap',
+        source: 'phoenix-heat-alerts-seed-points',
+        paint: {
+          'heatmap-weight': ['*', 6, ['coalesce', ['to-number', ['get', 'weight']], 0]],
+          'heatmap-intensity': [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            10, 1.6,
+            13, 2.2,
+            16, 3.0,
+          ],
+          // Heatmap radius is in *pixels*; scale it with zoom so the hotspot footprint
+          // stays roughly stable in real-world space while zooming.
+          'heatmap-radius': [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            10, 16,
+            13, 32,
+            16, 64,
+          ],
+          'heatmap-opacity': 0.88,
+          'heatmap-color': [
+            'interpolate',
+            ['linear'],
+            ['heatmap-density'],
+            0, 'rgba(0, 0, 0, 0)',
+            0.2, 'rgba(252, 211, 77, 0.35)',
+            0.45, 'rgba(251, 146, 60, 0.55)',
+            0.7, 'rgba(248, 113, 113, 0.70)',
+            1, 'rgba(239, 68, 68, 0.82)',
+          ],
+        },
+        layout: { visibility: 'none' },
+      }, firstSymbolId)
+
+      map.current.addLayer({
+        id: 'phoenix-heat-alerts-peaks-ring',
+        type: 'circle',
+        source: 'phoenix-heat-alerts-peaks',
+        paint: {
+          'circle-color': [
+            'case',
+            ['==', ['get', 'rank'], 1], 'rgba(239, 68, 68, 0.10)',
+            ['==', ['get', 'rank'], 2], 'rgba(251, 146, 60, 0.10)',
+            'rgba(252, 211, 77, 0.10)',
+          ],
+          'circle-stroke-color': [
+            'case',
+            ['==', ['get', 'rank'], 1], 'rgba(239, 68, 68, 0.95)',
+            ['==', ['get', 'rank'], 2], 'rgba(251, 146, 60, 0.95)',
+            'rgba(252, 211, 77, 0.95)',
+          ],
+          'circle-stroke-width': 3,
+          'circle-radius': [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            10, 18,
+            13, 26,
+            16, 34,
+          ],
+        },
+        layout: { visibility: 'none' },
+      }, firstSymbolId)
+
+      map.current.addLayer({
+        id: 'phoenix-heat-alerts-peaks-symbol',
+        type: 'circle',
+        source: 'phoenix-heat-alerts-peaks',
+        paint: {
+          'circle-color': [
+            'case',
+            ['==', ['get', 'rank'], 1], 'rgba(239, 68, 68, 0.95)',
+            ['==', ['get', 'rank'], 2], 'rgba(251, 146, 60, 0.95)',
+            'rgba(252, 211, 77, 0.95)',
+          ],
+          'circle-stroke-color': 'rgba(255,255,255,0.85)',
+          'circle-stroke-width': 1.5,
+          'circle-radius': [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            10, 6,
+            13, 8,
+            16, 10,
+          ],
         },
         layout: { visibility: 'none' },
       }, firstSymbolId)
@@ -2242,6 +2442,24 @@ export default function RiskMapView() {
       map.current.on('click', 'phoenix-homelessness-unclustered', showPhoenixHomelessnessSyntheticPopup)
       map.current.on('click', 'phoenix-homelessness-heatmap-points', showPhoenixHomelessnessSyntheticPopup)
 
+      // Phoenix alerts (Phase 1): click peak -> open action dialog
+      map.current.on('click', 'phoenix-heat-alerts-peaks-symbol', (e) => {
+        const f = e.features?.[0]
+        if (!f) return
+        const c = f?.geometry?.type === 'Point' ? f.geometry.coordinates : null
+        if (!Array.isArray(c) || c.length < 2) return
+        const p = f.properties || {}
+        setPhoenixHeatAlertsSelection({
+          id: String(p.id || ''),
+          lng: Number(c[0]),
+          lat: Number(c[1]),
+          score: Number(p.score || 0),
+          rank: Number(p.rank || 0),
+          dataKind: String(p.dataKind || 'unknown'),
+        })
+        setPhoenixHeatAlertsDialogOpen(true)
+      })
+
       map.current.on('click', 'phoenix-cooling-centers-points', (e) => {
         const f = e.features?.[0]
         if (!f) return
@@ -2363,6 +2581,7 @@ export default function RiskMapView() {
         'phoenix-villages-heatdeaths-fill',
         'phoenix-villages-cfs-rag-fill',
         'phoenix-cooling-centers-points',
+        'phoenix-heat-alerts-peaks-symbol',
       ].forEach((id) => {
         map.current.on('mouseenter', id, () => { map.current.getCanvas().style.cursor = 'pointer' })
         map.current.on('mouseleave', id, () => { map.current.getCanvas().style.cursor = '' })
@@ -3278,7 +3497,8 @@ export default function RiskMapView() {
     const enabledIllnesses = phoenixHeatIllnessesEnabled || {}
     const enabledSet = new Set(Object.keys(enabledIllnesses).filter((k) => enabledIllnesses[k] !== false))
 
-    const timeMode = String(phoenixHeatIllnessesTimeMode || 'current')
+    // Alerts mode should always follow the calendar (supports future forecasting).
+    const timeMode = 'current'
     const granularity = String(phoenixHeatIllnessesGranularity || 'week')
 
     const rows = (phoenixHeatIllnessesSyntheticDemo?.rows || []).filter((r) => {
@@ -4046,7 +4266,8 @@ export default function RiskMapView() {
     if (!map.current.getSource('phoenix-villages-cooling-centers-rag')) return
     if (!map.current.getSource('phoenix-council-districts-cooling-centers-rag')) return
 
-    const shouldShow = selectedCity === 'phoenix' && phoenixCoolingCentersVisible
+    // When Alerts are on, force-show cooling centers for routing workflows.
+    const shouldShow = selectedCity === 'phoenix' && (phoenixCoolingCentersVisible || activeActionTab === 'alerts')
     const setVis = (id, vis) => {
       if (map.current.getLayer(id)) map.current.setLayoutProperty(id, 'visibility', vis)
     }
@@ -4099,6 +4320,7 @@ export default function RiskMapView() {
     phoenixCoolingCentersGeoView,
     phoenixVillagesGeojson,
     phoenixCouncilDistrictsGeojson,
+    activeActionTab,
     mapLoaded,
   ])
 
@@ -4118,6 +4340,452 @@ export default function RiskMapView() {
     })()
     return () => { cancelled = true }
   }, [selectedCity, phoenixCoolingCentersVisible])
+
+  // Phoenix Alerts (Phase 1): Heat-illness hotspot + top-3 peaks
+  useEffect(() => {
+    if (!map.current || !mapLoaded) return
+    if (!map.current.getSource('phoenix-heat-alerts-seed-points')) return
+    if (!map.current.getSource('phoenix-heat-alerts-isobands')) return
+    if (!map.current.getSource('phoenix-heat-alerts-peaks')) return
+
+    const alertsOn = selectedCity === 'phoenix' && activeActionTab === 'alerts'
+    const setVis = (id, vis) => {
+      if (map.current.getLayer(id)) map.current.setLayoutProperty(id, 'visibility', vis)
+    }
+
+    setVis('phoenix-heat-alerts-isobands-fill', alertsOn ? 'visible' : 'none')
+    setVis('phoenix-heat-alerts-heatmap', 'none')
+    setVis('phoenix-heat-alerts-peaks-ring', alertsOn ? 'visible' : 'none')
+    setVis('phoenix-heat-alerts-peaks-symbol', alertsOn ? 'visible' : 'none')
+    setVis('phoenix-heat-alerts-route-line', alertsOn ? 'visible' : 'none')
+    setVis('phoenix-heat-alerts-route-arrows', alertsOn ? 'visible' : 'none')
+    setVis('phoenix-heat-alerts-route-dot', alertsOn ? 'visible' : 'none')
+
+    const clearTooltipMarkers = () => {
+      const prev = phoenixHeatAlertsTooltipMarkersRef.current || []
+      for (const m of prev) {
+        try { m?.remove?.() } catch {}
+      }
+      phoenixHeatAlertsTooltipMarkersRef.current = []
+    }
+
+    if (!alertsOn) {
+      map.current.getSource('phoenix-heat-alerts-seed-points').setData({ type: 'FeatureCollection', features: [] })
+      map.current.getSource('phoenix-heat-alerts-isobands').setData({ type: 'FeatureCollection', features: [] })
+      map.current.getSource('phoenix-heat-alerts-route-line').setData({ type: 'FeatureCollection', features: [] })
+      map.current.getSource('phoenix-heat-alerts-route-arrows').setData({ type: 'FeatureCollection', features: [] })
+      map.current.getSource('phoenix-heat-alerts-route-dot').setData({ type: 'FeatureCollection', features: [] })
+      map.current.getSource('phoenix-heat-alerts-peaks').setData({ type: 'FeatureCollection', features: [] })
+      clearTooltipMarkers()
+      setPhoenixHeatAlertsDialogOpen(false)
+      setPhoenixHeatAlertsSelection(null)
+      return
+    }
+
+    const enabled = phoenixHeatIllnessesEnabled || {}
+    const enabledSet = new Set(Object.keys(enabled).filter((k) => enabled[k] !== false))
+    // Alerts should always follow the calendar (and use FORECAST_2026 when selecting future dates).
+    const timeMode = 'current'
+    const granularity = String(phoenixHeatIllnessesGranularity || 'week')
+    const rows = phoenixHeatIllnessesSyntheticDemo?.rows || []
+    const baseDistricts = phoenixCouncilDistrictsGeojson || phoenixCouncilDistrictsCache.current
+    if (!baseDistricts?.features?.length) return
+
+    const { totalsByDistrict, dataKind } = computeHeatIllnessTotalsByDistrict({
+      rows,
+      selectedDate,
+      enabledSet,
+      timeMode,
+      granularity,
+    })
+    const samplesPerDistrict = 25
+    const seeds = buildSeedPointsFromDistrictTotals({ districtsGeojson: baseDistricts, totalsByDistrict, samplesPerDistrict })
+
+    const bbox = bboxFromGeojson(baseDistricts)
+    const citywideBbox = bboxFromGeojsonGeometry(baseDistricts) || bbox
+    const districtsPrepared = (baseDistricts.features || []).map((f) => {
+      const g = f?.geometry
+      if (!g) return null
+      const ringsList = []
+      if (g.type === 'Polygon') ringsList.push(g.coordinates || [])
+      else if (g.type === 'MultiPolygon') for (const poly of g.coordinates || []) ringsList.push(poly)
+      else return null
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+      const bump = (x, y) => {
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return
+        minX = Math.min(minX, x); minY = Math.min(minY, y)
+        maxX = Math.max(maxX, x); maxY = Math.max(maxY, y)
+      }
+      for (const rings of ringsList) {
+        const outer = rings?.[0]
+        if (!Array.isArray(outer)) continue
+        for (const c of outer) {
+          if (Array.isArray(c) && c.length >= 2) bump(c[0], c[1])
+        }
+      }
+      if (![minX, minY, maxX, maxY].every(Number.isFinite)) return null
+      return { bbox: [minX, minY, maxX, maxY], ringsList }
+    }).filter(Boolean)
+
+    const insideAnyDistrict = (lng, lat) => {
+      for (const d of districtsPrepared) {
+        const b = d.bbox
+        if (lng < b[0] || lng > b[2] || lat < b[1] || lat > b[3]) continue
+        for (const rings of d.ringsList) {
+          if (pointInPolygonRings(lng, lat, rings)) return true
+        }
+      }
+      return false
+    }
+
+    const { peaks } = findTop3HotspotPeaks({ seedPoints: seeds, bbox, gridSize: 60, suppressKm: 6, insidePolygonFn: insideAnyDistrict })
+    const peakFc = {
+      type: 'FeatureCollection',
+      features: (peaks || []).map((p, idx) => {
+        const est = estimateCasesNearPeak({
+          seedPoints: seeds,
+          peakLngLat: [p.lng, p.lat],
+          radiusKm: 5,
+        })
+        return {
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [p.lng, p.lat] },
+          properties: {
+            id: `heat-alert-${idx + 1}`,
+            rank: p.rank,
+            score: p.score,
+            dataKind,
+            estimatedCases: est,
+            estimatedCasesRadiusKm: 5,
+          },
+        }
+      }),
+    }
+
+    // Default/refresh selection (rank #1) so tooltips match the selected date.
+    const peakIds = new Set((peakFc.features || []).map((f) => String(f?.properties?.id || '')))
+    if (peakFc.features.length && (!phoenixHeatAlertsSelection || !peakIds.has(String(phoenixHeatAlertsSelection.id || '')))) {
+      const f0 = peakFc.features[0]
+      const c0 = f0?.geometry?.type === 'Point' ? f0.geometry.coordinates : null
+      if (Array.isArray(c0) && c0.length >= 2) {
+        setPhoenixHeatAlertsSelection({
+          id: String(f0?.properties?.id || ''),
+          lng: Number(c0[0]),
+          lat: Number(c0[1]),
+          score: Number(f0?.properties?.score || 0),
+          rank: Number(f0?.properties?.rank || 1),
+          dataKind: String(f0?.properties?.dataKind || 'unknown'),
+          estimatedCases: Number(f0?.properties?.estimatedCases),
+          estimatedCasesRadiusKm: Number(f0?.properties?.estimatedCasesRadiusKm),
+        })
+      }
+    }
+
+    // Area heatmap (isobands) from the full intensity surface.
+    const isobands = buildHotspotIsobandsGeojson({
+      seedPoints: seeds,
+      bbox: citywideBbox,
+      gridSize: 70, // medium
+    })
+    map.current.getSource('phoenix-heat-alerts-isobands').setData(isobands)
+
+    // Keep the old circular heatmap source empty (not used for rendering).
+    map.current.getSource('phoenix-heat-alerts-seed-points').setData({ type: 'FeatureCollection', features: [] })
+    map.current.getSource('phoenix-heat-alerts-peaks').setData(peakFc)
+
+    // Persistent tooltips anchored above each peak marker.
+    clearTooltipMarkers()
+    const peaksFeatures = peakFc?.features || []
+    for (const f of peaksFeatures) {
+      const c = f?.geometry?.type === 'Point' ? f.geometry.coordinates : null
+      if (!Array.isArray(c) || c.length < 2) continue
+      const p = f.properties || {}
+      const rank = Number(p.rank || 0) || 0
+      const dataKind = String(p.dataKind || '')
+      const isFutureSelected = (() => {
+        if (!(selectedDate instanceof Date) || Number.isNaN(selectedDate.getTime())) return false
+        const now = new Date()
+        const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0)
+        const sel0 = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate(), 0, 0, 0, 0)
+        return sel0.getTime() > today0.getTime()
+      })()
+      const kindLabel = (dataKind === 'forecast' && isFutureSelected)
+        ? 'Forecast'
+        : (dataKind === 'forecast' ? '' : 'Observed')
+      const estCases = Number(p.estimatedCases)
+      const estLabel = Number.isFinite(estCases) ? Math.round(estCases).toLocaleString() : '—'
+      const rKm = Number(p.estimatedCasesRadiusKm)
+      const rLabel = Number.isFinite(rKm) ? rKm : 5
+
+      const el = document.createElement('button')
+      el.type = 'button'
+      el.title = 'Open alert actions'
+      el.style.pointerEvents = 'auto'
+      el.style.cursor = 'pointer'
+      el.style.border = '1px solid rgba(255,255,255,0.16)'
+      el.style.background = 'rgba(0,0,0,0.72)'
+      el.style.backdropFilter = 'blur(10px) saturate(160%)'
+      el.style.color = 'rgba(255,255,255,0.92)'
+      el.style.borderRadius = '12px'
+      el.style.padding = '8px 10px'
+      el.style.boxShadow = '0 16px 36px rgba(0,0,0,0.45), 0 0 0 1px rgba(0,0,0,0.35)'
+      el.style.fontFamily = 'inherit'
+      el.style.maxWidth = '240px'
+      el.style.textAlign = 'left'
+      el.innerHTML = `
+        <div style="font-size:11px;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;color:rgba(255,255,255,0.70)">
+          Affected area
+        </div>
+        <div style="margin-top:3px;font-size:13px;font-weight:800;line-height:1.15">
+          Hotspot #${rank || 1}${kindLabel ? ` · ${kindLabel}` : ''}
+        </div>
+        <div style="margin-top:3px;font-size:12px;font-weight:600;color:rgba(255,255,255,0.78)">
+          Est. cases (${rLabel} km): ${estLabel}
+        </div>
+      `
+      el.onclick = () => {
+        setPhoenixHeatAlertsSelection({
+          id: String(p.id || ''),
+          lng: Number(c[0]),
+          lat: Number(c[1]),
+          score: Number(p.score || 0),
+          rank: Number(p.rank || 0),
+          dataKind: String(p.dataKind || 'unknown'),
+          estimatedCases: Number.isFinite(estCases) ? estCases : null,
+          estimatedCasesRadiusKm: Number.isFinite(rKm) ? rKm : 5,
+        })
+        setPhoenixHeatAlertsDialogOpen(true)
+      }
+
+      const marker = new mapLib.current.Marker({ element: el, anchor: 'bottom', offset: [0, -18] })
+        .setLngLat([c[0], c[1]])
+        .addTo(map.current)
+      phoenixHeatAlertsTooltipMarkersRef.current.push(marker)
+    }
+  }, [
+    selectedCity,
+    activeActionTab,
+    phoenixHeatIllnessesEnabled,
+    phoenixHeatIllnessesTimeMode,
+    phoenixHeatIllnessesGranularity,
+    phoenixCouncilDistrictsGeojson,
+    selectedDate,
+    phoenixHeatAlertsSelection,
+    mapLoaded,
+  ])
+
+  // Phoenix Alerts: pulse animation for ring
+  useEffect(() => {
+    if (!map.current || !mapLoaded) return
+    const alertsOn = selectedCity === 'phoenix' && activeActionTab === 'alerts'
+    const layerId = 'phoenix-heat-alerts-peaks-ring'
+    if (!alertsOn || !map.current.getLayer(layerId)) {
+      if (phoenixHeatAlertsPulseRafRef.current) cancelAnimationFrame(phoenixHeatAlertsPulseRafRef.current)
+      phoenixHeatAlertsPulseRafRef.current = null
+      return
+    }
+
+    let cancelled = false
+    const animate = () => {
+      if (cancelled || !map.current || !map.current.getLayer(layerId)) return
+      const t = Date.now() / 650
+      const pulse = (Math.sin(t * Math.PI * 2) + 1) / 2 // 0..1
+      const radius = 18 + pulse * 14
+      try {
+        map.current.setPaintProperty(layerId, 'circle-radius', radius)
+        map.current.setPaintProperty(layerId, 'circle-stroke-opacity', 0.9)
+        map.current.setPaintProperty(layerId, 'circle-opacity', 0.5)
+      } catch {}
+      phoenixHeatAlertsPulseRafRef.current = requestAnimationFrame(animate)
+    }
+    phoenixHeatAlertsPulseRafRef.current = requestAnimationFrame(animate)
+
+    return () => {
+      cancelled = true
+      if (phoenixHeatAlertsPulseRafRef.current) cancelAnimationFrame(phoenixHeatAlertsPulseRafRef.current)
+      phoenixHeatAlertsPulseRafRef.current = null
+    }
+  }, [selectedCity, activeActionTab, mapLoaded])
+
+  // Phoenix Alerts: route line + animated arrows from selected hotspot -> best cooling center
+  useEffect(() => {
+    if (!map.current || !mapLoaded) return
+    if (!map.current.getSource('phoenix-heat-alerts-route-line')) return
+    if (!map.current.getSource('phoenix-heat-alerts-route-arrows')) return
+    if (!map.current.getSource('phoenix-heat-alerts-route-dot')) return
+
+    const alertsOn = selectedCity === 'phoenix' && activeActionTab === 'alerts'
+    if (!alertsOn || !phoenixHeatAlertsSelection) {
+      if (phoenixHeatAlertsRouteRafRef.current) cancelAnimationFrame(phoenixHeatAlertsRouteRafRef.current)
+      phoenixHeatAlertsRouteRafRef.current = null
+      try {
+        map.current.getSource('phoenix-heat-alerts-route-line').setData({ type: 'FeatureCollection', features: [] })
+        map.current.getSource('phoenix-heat-alerts-route-arrows').setData({ type: 'FeatureCollection', features: [] })
+        map.current.getSource('phoenix-heat-alerts-route-dot').setData({ type: 'FeatureCollection', features: [] })
+      } catch {}
+      return
+    }
+
+    const peakLng = Number(phoenixHeatAlertsSelection.lng)
+    const peakLat = Number(phoenixHeatAlertsSelection.lat)
+    if (!Number.isFinite(peakLng) || !Number.isFinite(peakLat)) return
+
+    const forcedTarget = phoenixHeatAlertsRedirectTarget
+      && Number.isFinite(Number(phoenixHeatAlertsRedirectTarget.lng))
+      && Number.isFinite(Number(phoenixHeatAlertsRedirectTarget.lat))
+      ? { lng: Number(phoenixHeatAlertsRedirectTarget.lng), lat: Number(phoenixHeatAlertsRedirectTarget.lat) }
+      : null
+
+    const ccGeo = phoenixCoolingCentersLastGeojsonRef.current
+    const ccFeatures = ccGeo?.features || []
+
+    const haversineKm = (lng1, lat1, lng2, lat2) => {
+      const R = 6371
+      const toRad = (d) => (d * Math.PI) / 180
+      const dLat = toRad(lat2 - lat1)
+      const dLng = toRad(lng2 - lng1)
+      const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2
+      return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)))
+    }
+
+    const bestCenter = forcedTarget || (() => {
+      const all = []
+      for (const f of ccFeatures) {
+        const c = f?.geometry?.type === 'Point' ? f.geometry.coordinates : null
+        if (!Array.isArray(c) || c.length < 2) continue
+        const p = f.properties || {}
+        const cap = Number(p.capacityEstimate)
+        const vc = Number(p.visitCount)
+        const hasCapacity = Number.isFinite(cap) && cap > 0
+        const loadRatio = hasCapacity && Number.isFinite(vc) ? vc / cap : null
+        const notFull = hasCapacity && loadRatio != null ? loadRatio < 1 : false
+        const dKm = haversineKm(peakLng, peakLat, c[0], c[1])
+        all.push({ lng: c[0], lat: c[1], dKm, hasCapacity, notFull })
+      }
+      all.sort((a, b) => (a.dKm ?? Infinity) - (b.dKm ?? Infinity))
+      const preferred = all.find((c) => c.hasCapacity && c.notFull)
+      return preferred || all[0] || null
+    })()
+
+    if (!bestCenter) return
+
+    const dstLng = Number(bestCenter.lng)
+    const dstLat = Number(bestCenter.lat)
+    if (!Number.isFinite(dstLng) || !Number.isFinite(dstLat)) return
+
+    const curvedArc = (aLng, aLat, bLng, bLat, steps = 64) => {
+      const pts = []
+      const dx = bLng - aLng
+      const dy = bLat - aLat
+      const dist = Math.sqrt(dx * dx + dy * dy)
+      const mx = (aLng + bLng) / 2
+      const my = (aLat + bLat) / 2
+      const nx = -dy
+      const ny = dx
+      const nLen = Math.sqrt(nx * nx + ny * ny) || 1
+      const bend = Math.min(0.25, 0.12 + dist * 0.25) * dist
+      const cx = mx + (nx / nLen) * bend
+      const cy = my + (ny / nLen) * bend
+      for (let i = 0; i <= steps; i++) {
+        const t = i / steps
+        const omt = 1 - t
+        const x = omt * omt * aLng + 2 * omt * t * cx + t * t * bLng
+        const y = omt * omt * aLat + 2 * omt * t * cy + t * t * bLat
+        pts.push([x, y])
+      }
+      return pts
+    }
+
+    const lineCoords = curvedArc(peakLng, peakLat, dstLng, dstLat, 72)
+    const lineFc = {
+      type: 'FeatureCollection',
+      features: [{
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates: lineCoords },
+        properties: {},
+      }],
+    }
+    map.current.getSource('phoenix-heat-alerts-route-line').setData(lineFc)
+
+    const bearingDeg = (a, b) => {
+      const toRad = (d) => (d * Math.PI) / 180
+      const toDeg = (r) => (r * 180) / Math.PI
+      const [lng1, lat1] = a
+      const [lng2, lat2] = b
+      const y = Math.sin(toRad(lng2 - lng1)) * Math.cos(toRad(lat2))
+      const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) - Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(toRad(lng2 - lng1))
+      const brng = (toDeg(Math.atan2(y, x)) + 360) % 360
+      return brng
+    }
+
+    const arrowColor = (() => {
+      const r = Number(phoenixHeatAlertsSelection.rank || 1)
+      if (r === 1) return 'rgba(239, 68, 68, 0.95)'
+      if (r === 2) return 'rgba(251, 146, 60, 0.95)'
+      return 'rgba(252, 211, 77, 0.95)'
+    })()
+
+    const dotColor = (() => {
+      const lr = phoenixHeatAlertsRedirectTarget ? Number(phoenixHeatAlertsRedirectTarget.loadRatio) : null
+      if (!Number.isFinite(lr)) return 'rgba(34, 197, 94, 0.95)'
+      if (lr >= 1) return 'rgba(239, 68, 68, 0.95)'
+      if (lr >= 0.8) return 'rgba(245, 158, 11, 0.95)'
+      return 'rgba(34, 197, 94, 0.95)'
+    })()
+
+    const lineColor = phoenixHeatAlertsRedirectTarget ? dotColor : 'rgba(255,255,255,0.82)'
+    const arrowsColor = phoenixHeatAlertsRedirectTarget ? dotColor : arrowColor
+    try {
+      map.current.setPaintProperty('phoenix-heat-alerts-route-line', 'line-color', lineColor)
+    } catch {}
+
+    let cancelled = false
+    let phase = 0
+    const animate = () => {
+      if (cancelled || !map.current) return
+      phase = (phase + 0.006) % 1
+      const arrows = []
+      const n = 10
+      for (let i = 0; i < n; i++) {
+        const t = (i / n + phase) % 1
+        const idx = Math.min(lineCoords.length - 2, Math.max(0, Math.floor(t * (lineCoords.length - 1))))
+        const p0 = lineCoords[idx]
+        const p1 = lineCoords[idx + 1]
+        const br = bearingDeg(p0, p1)
+        arrows.push({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: p0 },
+          properties: { bearing: br, color: arrowsColor },
+        })
+      }
+      try {
+        map.current.getSource('phoenix-heat-alerts-route-arrows').setData({ type: 'FeatureCollection', features: arrows })
+      } catch {}
+
+      // Traveling dot
+      const tDot = phase
+      const idxDot = Math.min(lineCoords.length - 2, Math.max(0, Math.floor(tDot * (lineCoords.length - 1))))
+      const dotPt = lineCoords[idxDot]
+      try {
+        map.current.getSource('phoenix-heat-alerts-route-dot').setData({
+          type: 'FeatureCollection',
+          features: [{
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: dotPt },
+            properties: { color: dotColor },
+          }],
+        })
+      } catch {}
+      phoenixHeatAlertsRouteRafRef.current = requestAnimationFrame(animate)
+    }
+    phoenixHeatAlertsRouteRafRef.current = requestAnimationFrame(animate)
+
+    return () => {
+      cancelled = true
+      if (phoenixHeatAlertsRouteRafRef.current) cancelAnimationFrame(phoenixHeatAlertsRouteRafRef.current)
+      phoenixHeatAlertsRouteRafRef.current = null
+    }
+  }, [selectedCity, activeActionTab, phoenixHeatAlertsSelection, phoenixHeatAlertsRedirectTarget, mapLoaded, selectedDate])
 
   // Phoenix City Services overlay (districts): shared map options for Cooling + Homelessness
   useEffect(() => {
@@ -6108,6 +6776,7 @@ export default function RiskMapView() {
             : (label === 'Historical' || label === 'Historical Data') ? 'rgba(45,212,191,0.95)'
               : 'rgba(148,163,184,0.95)' // slate for "Today"
 
+        const showAlertsPill = selectedCity === 'phoenix' && activeActionTab === 'alerts'
         return (
           <div
             style={{
@@ -6120,6 +6789,7 @@ export default function RiskMapView() {
               pointerEvents: 'none',
               display: 'flex',
               justifyContent: 'center',
+              gap: 10,
             }}
           >
             <div
@@ -6154,9 +6824,42 @@ export default function RiskMapView() {
                 ) : null}
               </div>
             </div>
+
+            {showAlertsPill ? (
+              <button
+                type="button"
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: 999,
+                  border: '1px solid rgba(255,255,255,0.22)',
+                  background: 'rgba(0, 0, 0, 0.62)',
+                  backdropFilter: 'blur(10px) saturate(160%)',
+                  boxShadow: `0 14px 34px rgba(0,0,0,0.55), 0 0 0 1px rgba(0,0,0,0.35), 0 0 22px rgba(239,68,68,0.18)`,
+                  color: 'rgba(255,255,255,0.96)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  maxWidth: 'min(420px, calc(100vw - 32px))',
+                  pointerEvents: 'auto',
+                  cursor: 'pointer',
+                }}
+                title="Open alert actions"
+                onClick={() => {
+                  if (selectedCity === 'phoenix' && activeActionTab === 'alerts' && phoenixHeatAlertsSelection) {
+                    setPhoenixHeatAlertsDialogOpen(true)
+                  }
+                }}
+              >
+                <span style={{ width: 8, height: 8, borderRadius: 999, background: 'rgba(239,68,68,0.95)', boxShadow: '0 0 0 2px rgba(0,0,0,0.35), 0 0 10px rgba(239,68,68,0.35)' }} />
+                <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', lineHeight: 1 }}>
+                  Heat related illnesses alerts (3) · {selectedDate instanceof Date ? selectedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : ''}
+                </div>
+              </button>
+            ) : null}
           </div>
         )
       })()}
+
       <div
         ref={mapContainer}
         style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 10 }}

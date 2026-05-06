@@ -1,6 +1,6 @@
 import NavLeft from './NavLeft'
-import NavCenter from './NavCenter'
 import NavRight from './NavRight'
+import ActionTabsBar from './ActionTabsBar'
 
 export default function TopNav() {
   return (
@@ -17,6 +17,9 @@ export default function TopNav() {
       aria-label="Main navigation"
     >
       <NavLeft />
+      <div className="flex-1 flex items-center justify-end">
+        <ActionTabsBar />
+      </div>
       <NavRight />
     </nav>
   )

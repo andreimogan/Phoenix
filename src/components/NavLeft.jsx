@@ -39,6 +39,7 @@ export default function NavLeft() {
     phoenixCoolingCentersTimeMode,
     phoenixHomelessnessVisible,
     phoenixHomelessnessTimeMode,
+    activeActionTab,
   } = usePanelContext()
   const [cityOpen, setCityOpen] = useState(false)
   const [dateOpen, setDateOpen] = useState(false)
@@ -127,6 +128,12 @@ export default function NavLeft() {
     }
     // Temperature: allow looking up to 16 days ahead when the layer is on.
     if (selectedCity === 'phoenix' && phoenixTemperatureNeighborhoodsVisible) {
+      const max = new Date(today)
+      max.setDate(max.getDate() + 16)
+      return max
+    }
+    // Alerts: allow looking up to 16 days ahead while Allerts is active.
+    if (selectedCity === 'phoenix' && activeActionTab === 'alerts') {
       const max = new Date(today)
       max.setDate(max.getDate() + 16)
       return max

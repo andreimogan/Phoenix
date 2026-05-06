@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from 'react'
+import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import { sendChatMessage } from '../services/openai-chat'
 import { idbGet, idbSet } from '../utils/idb'
 import {
@@ -447,6 +447,13 @@ export const PanelProvider = ({ children }) => {
   const [activeActionTab, setActiveActionTab] = useState(null) // 'alerts' | 'forecasting' | 'permits' | null
   const [actionTabAnchor, setActionTabAnchor] = useState(null) // viewport rect for active action button
   const [neighborhoodAlerts, setNeighborhoodAlerts] = useState(null) // Alert data grouped by severity
+
+  // Phoenix: Heat-illness Alerts (Phase 1)
+  const [phoenixHeatAlertsSelection, setPhoenixHeatAlertsSelection] = useState(null) // { id, lng, lat, score, rank, dataKind }
+  const [phoenixHeatAlertsDialogOpen, setPhoenixHeatAlertsDialogOpen] = useState(false)
+  const [phoenixHeatAlertsRedirectTarget, setPhoenixHeatAlertsRedirectTarget] = useState(null) // { id, lng, lat, name, loadRatio } | null
+  const phoenixHeatAlertsLayerSnapshotRef = useRef(null) // { key: boolean } for restoring map layers after alerts
+  const phoenixHeatAlertsPrevActionTabRef = useRef(null)
   
   // Forecasting data
   const [potholeForecasts, setPotholeForecasts] = useState(null) // Pothole forecast data
@@ -460,6 +467,107 @@ export const PanelProvider = ({ children }) => {
   }
 
   const clearIntelligenceNotification = () => setHasUnreadIntelligence(false)
+
+  // Alerts focus mode:
+  // - Enter alerts: snapshot current map layer toggles, then turn them off
+  // - Exit alerts: restore the snapshot, but keep any layers enabled while in alerts
+  useEffect(() => {
+    const prev = phoenixHeatAlertsPrevActionTabRef.current
+    const next = activeActionTab
+    phoenixHeatAlertsPrevActionTabRef.current = next
+
+    const enteredAlerts = prev !== 'alerts' && next === 'alerts'
+    const exitedAlerts = prev === 'alerts' && next !== 'alerts'
+
+    // These are the main map-layer toggles that visually compete with Alerts mode.
+    const snapshot = () => ({
+      neighborhoodsRiskVisible: !!neighborhoodsRiskVisible,
+      phoenixCoolingCentersVisible: !!phoenixCoolingCentersVisible,
+      phoenixHomelessnessVisible: !!phoenixHomelessnessVisible,
+      phoenixTemperatureNeighborhoodsVisible: !!phoenixTemperatureNeighborhoodsVisible,
+      phoenixHeatDeathsVisible: !!phoenixHeatDeathsVisible,
+      phoenixHeatIllnessesVisible: !!phoenixHeatIllnessesVisible,
+      callsForServiceVisible: !!callsForServiceVisible,
+      phoenixVillagesCfsRagVisible: !!phoenixVillagesCfsRagVisible,
+      phoenixCouncilDistrictsCfsRagVisible: !!phoenixCouncilDistrictsCfsRagVisible,
+      phoenixNeighborhoodBoundariesVisible: !!phoenixNeighborhoodBoundariesVisible,
+      phoenixCouncilDistrictBoundariesVisible: !!phoenixCouncilDistrictBoundariesVisible,
+
+      // Risk overlays (per-view situational awareness toggles)
+      situationalMaster: !!phoenixSituationalAwareness?.master,
+      situationalHeat: !!phoenixSituationalAwareness?.heat,
+      situationalCalls311: !!phoenixSituationalAwareness?.calls311,
+      situationalHousing: !!phoenixSituationalAwareness?.housing,
+      situationalEcon: !!phoenixSituationalAwareness?.econ,
+    })
+
+    if (enteredAlerts) {
+      phoenixHeatAlertsLayerSnapshotRef.current = snapshot()
+
+      // Turn off competing layers (Alerts will still force-show cooling centers points).
+      setNeighborhoodsRiskVisible(false)
+      setPhoenixCoolingCentersVisible(false)
+      setPhoenixHomelessnessVisible(false)
+      setPhoenixTemperatureNeighborhoodsVisible(false)
+      setPhoenixHeatDeathsVisible(false)
+      setPhoenixHeatIllnessesVisible(false)
+      setCallsForServiceVisible(false)
+      setPhoenixVillagesCfsRagVisible(false)
+      setPhoenixCouncilDistrictsCfsRagVisible(false)
+      setPhoenixNeighborhoodBoundariesVisible(false)
+      setPhoenixCouncilDistrictBoundariesVisible(false)
+
+      // Risk overlays: turn off situational master (subflags are preserved internally)
+      setPhoenixSituationalMaster(false)
+      return
+    }
+
+    if (exitedAlerts) {
+      const before = phoenixHeatAlertsLayerSnapshotRef.current
+      phoenixHeatAlertsLayerSnapshotRef.current = null
+      if (!before) return
+
+      // If user enabled any layers while Alerts was active, keep them ON.
+      const current = snapshot()
+      const want = {}
+      for (const k of Object.keys(before)) want[k] = !!before[k] || !!current[k]
+
+      setNeighborhoodsRiskVisible(!!want.neighborhoodsRiskVisible)
+      setPhoenixCoolingCentersVisible(!!want.phoenixCoolingCentersVisible)
+      setPhoenixHomelessnessVisible(!!want.phoenixHomelessnessVisible)
+      setPhoenixTemperatureNeighborhoodsVisible(!!want.phoenixTemperatureNeighborhoodsVisible)
+      setPhoenixHeatDeathsVisible(!!want.phoenixHeatDeathsVisible)
+      setPhoenixHeatIllnessesVisible(!!want.phoenixHeatIllnessesVisible)
+      setCallsForServiceVisible(!!want.callsForServiceVisible)
+      setPhoenixVillagesCfsRagVisible(!!want.phoenixVillagesCfsRagVisible)
+      setPhoenixCouncilDistrictsCfsRagVisible(!!want.phoenixCouncilDistrictsCfsRagVisible)
+      setPhoenixNeighborhoodBoundariesVisible(!!want.phoenixNeighborhoodBoundariesVisible)
+      setPhoenixCouncilDistrictBoundariesVisible(!!want.phoenixCouncilDistrictBoundariesVisible)
+
+      // Restore situational overlays (union of before/current).
+      setPhoenixSituationalMaster(!!want.situationalMaster)
+      setPhoenixSituationalHeat(!!want.situationalHeat)
+      setPhoenixSituational311(!!want.situationalCalls311)
+      setPhoenixSituationalHousing(!!want.situationalHousing)
+      setPhoenixSituationalEcon(!!want.situationalEcon)
+    }
+  }, [
+    activeActionTab,
+    // snapshot deps
+    neighborhoodsRiskVisible,
+    phoenixCoolingCentersVisible,
+    phoenixHomelessnessVisible,
+    phoenixTemperatureNeighborhoodsVisible,
+    phoenixHeatDeathsVisible,
+    phoenixHeatIllnessesVisible,
+    callsForServiceVisible,
+    phoenixVillagesCfsRagVisible,
+    phoenixCouncilDistrictsCfsRagVisible,
+    phoenixNeighborhoodBoundariesVisible,
+    phoenixCouncilDistrictBoundariesVisible,
+
+    phoenixSituationalAwareness,
+  ])
 
   const createWorkOrder = (workOrderData) => {
     const uniqueSuffix = Math.random().toString(36).slice(2, 7).toUpperCase()
@@ -1300,6 +1408,14 @@ export const PanelProvider = ({ children }) => {
     setActionTabAnchor,
     neighborhoodAlerts,
     setNeighborhoodAlerts,
+
+    // Phoenix heat alerts (Phase 1)
+    phoenixHeatAlertsSelection,
+    setPhoenixHeatAlertsSelection,
+    phoenixHeatAlertsDialogOpen,
+    setPhoenixHeatAlertsDialogOpen,
+    phoenixHeatAlertsRedirectTarget,
+    setPhoenixHeatAlertsRedirectTarget,
     
     // Forecasting
     potholeForecasts,

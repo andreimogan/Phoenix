@@ -12,10 +12,17 @@ function haversineKm(lng1, lat1, lng2, lat2) {
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)))
 }
 
-function fmtKm(km) {
+function fmtMiFromKm(km) {
   if (!Number.isFinite(km)) return '—'
-  if (km < 1) return `${Math.round(km * 1000)} m`
-  return `${km.toFixed(km < 10 ? 1 : 0)} km`
+  const mi = km * 0.621371
+  if (mi < 1) return `${Math.round(mi * 5280)} ft`
+  return `${mi.toFixed(mi < 10 ? 1 : 0)} mi`
+}
+
+function fmtMilesFromKm(km) {
+  if (!Number.isFinite(km)) return '—'
+  const mi = km * 0.621371
+  return mi.toFixed(mi < 10 ? 1 : 0)
 }
 
 export default function AlertActionDialog() {
@@ -182,7 +189,7 @@ export default function AlertActionDialog() {
               Top hotspot #{peak?.rank || '—'} · {header.dateLabel}
             </div>
             <div className="text-[12px]" style={{ color: 'rgba(255,255,255,0.62)' }}>
-              Est. cases{estimates.radiusKm ? ` (${estimates.radiusKm} km)` : ''}: {estimates.estCases == null ? '—' : Math.round(estimates.estCases).toLocaleString()}
+              Est. cases{estimates.radiusKm ? ` (${fmtMilesFromKm(estimates.radiusKm)} mi)` : ''}: {estimates.estCases == null ? '—' : Math.round(estimates.estCases).toLocaleString()}
             </div>
           </div>
           <button
@@ -228,7 +235,7 @@ export default function AlertActionDialog() {
                           {c.address || '—'}
                         </div>
                         <div className="text-[12px]" style={{ color: 'rgba(255,255,255,0.60)' }}>
-                          {fmtKm(c.distanceKm)} · District {c.councilDistrict || '—'}
+                          {fmtMiFromKm(c.distanceKm)} · District {c.councilDistrict || '—'}
                         </div>
                       </div>
                       <div className="text-right shrink-0">
@@ -276,7 +283,7 @@ export default function AlertActionDialog() {
                               createWorkOrder?.({
                                 type: 'Heat illness alert',
                                 title: `Redirect to cooling center: ${c.name}`,
-                                description: `Redirect from hotspot to cooling center (${fmtKm(c.distanceKm)} away).`,
+                                description: `Redirect from hotspot to cooling center (${fmtMiFromKm(c.distanceKm)} away).`,
                                 location: { lng: c.lng, lat: c.lat },
                                 city: 'phoenix',
                                 metadata: { peak, coolingCenter: c },

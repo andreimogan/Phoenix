@@ -516,19 +516,13 @@ export default function ManageMapLayersPanel() {
 
   /**
    * Heat stack vs City Services:
-   * - Activating Heat turns off BOTH Cooling Centers and Homelessness.
-   * - Activating either City Service turns off Heat stack only; Cooling + Homelessness can be on together.
+   * - Heat (illnesses / temperature / deaths) and City Services (cooling / homelessness) are additive.
+   * - The ONLY exclusivity is within the Heat stack itself (illnesses vs temperature vs deaths).
    */
   const enforcePhoenixHeatHomelessnessPrimaryExclusivity = (keep) => {
-    if (keep === 'heat') {
-      setPhoenixCoolingCentersVisible(false)
-      setPhoenixHomelessnessVisible(false)
-      setPhoenixHomelessnessAffectedNeighborhoodsVisible(false)
-      return
-    }
-    if (keep === 'cooling' || keep === 'homeless') {
-      disablePhoenixHeatStack()
-    }
+    // Intentionally a no-op: user can enable Heat + City Services together.
+    // Kept for call-site stability / future policy changes.
+    void keep
   }
 
   const getPhoenixCityServicesMasterState = () => {
@@ -602,7 +596,6 @@ export default function ManageMapLayersPanel() {
       setPhoenixCoolingCentersVisible(!!s.cooling)
       setPhoenixHomelessnessVisible(!!s.homeless)
       setPhoenixHomelessnessAffectedNeighborhoodsVisible(!!s.homeless && !!s.affected)
-      disablePhoenixHeatStack()
       activateHeatMasterIfNeeded()
       return
     }
@@ -620,7 +613,6 @@ export default function ManageMapLayersPanel() {
     setPhoenixHeatIllnessesVisible((prev) => {
       const next = !prev
       if (next) {
-        enforcePhoenixHeatHomelessnessPrimaryExclusivity('heat')
         enforcePhoenixHeatSubLayerExclusivity('illnesses')
         activateHeatMasterIfNeeded()
       }
@@ -646,7 +638,6 @@ export default function ManageMapLayersPanel() {
       const next = !prev
       if (next) {
         activateHeatMasterIfNeeded()
-        enforcePhoenixHeatHomelessnessPrimaryExclusivity('cooling')
       }
       return next
     })
@@ -656,7 +647,6 @@ export default function ManageMapLayersPanel() {
     setPhoenixTemperatureNeighborhoodsVisible((prev) => {
       const next = !prev
       if (next) {
-        enforcePhoenixHeatHomelessnessPrimaryExclusivity('heat')
         enforcePhoenixHeatSubLayerExclusivity('temperature')
         activateHeatMasterIfNeeded()
       }
@@ -692,7 +682,6 @@ export default function ManageMapLayersPanel() {
   const togglePhoenixHeatMaster = () => {
     const state = getPhoenixHeatMasterState()
     if (state === 'off') {
-      enforcePhoenixHeatHomelessnessPrimaryExclusivity('heat')
       setPhoenixHeatIllnessesVisible(true)
       activateHeatMasterIfNeeded()
       return

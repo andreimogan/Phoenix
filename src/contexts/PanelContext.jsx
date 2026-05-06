@@ -40,7 +40,7 @@ const DEFAULT_VIEW_WINDOWS = {
     heatRelief: false,
     latest311: false,
     intervention: false,
-    briefingRoom: true,
+    briefingRoom: false,
   },
   risk: {
     weather: false,
@@ -48,7 +48,7 @@ const DEFAULT_VIEW_WINDOWS = {
     heatRelief: true,
     latest311: false,
     intervention: false,
-    briefingRoom: true,
+    briefingRoom: false,
   },
 }
 

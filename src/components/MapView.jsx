@@ -3504,8 +3504,7 @@ export default function MapView() {
     const enabledIllnesses = phoenixHeatIllnessesEnabled || {}
     const enabledSet = new Set(Object.keys(enabledIllnesses).filter((k) => enabledIllnesses[k] !== false))
 
-    // Alerts mode should always follow the calendar (supports future forecasting).
-    const timeMode = 'current'
+    const timeMode = String(phoenixHeatIllnessesTimeMode || 'all_historical') === 'current' ? 'current' : 'all_historical'
     const granularity = String(phoenixHeatIllnessesGranularity || 'week')
 
     const rows = (phoenixHeatIllnessesSyntheticDemo?.rows || []).filter((r) => {
@@ -4394,8 +4393,7 @@ export default function MapView() {
 
     const enabled = phoenixHeatIllnessesEnabled || {}
     const enabledSet = new Set(Object.keys(enabled).filter((k) => enabled[k] !== false))
-    // Alerts should always follow the calendar (and use FORECAST_2026 when selecting future dates).
-    const timeMode = 'current'
+    const timeMode = String(phoenixHeatIllnessesTimeMode || 'all_historical') === 'current' ? 'current' : 'all_historical'
     const granularity = String(phoenixHeatIllnessesGranularity || 'week')
     const rows = phoenixHeatIllnessesSyntheticDemo?.rows || []
     const baseDistricts = phoenixCouncilDistrictsGeojson || phoenixCouncilDistrictsCache.current
@@ -4526,6 +4524,8 @@ export default function MapView() {
       const estLabel = Number.isFinite(estCases) ? Math.round(estCases).toLocaleString() : '—'
       const rKm = Number(p.estimatedCasesRadiusKm)
       const rLabel = Number.isFinite(rKm) ? rKm : 5
+      const rMi = rLabel * 0.621371
+      const rMiLabel = Number.isFinite(rMi) ? rMi.toFixed(rMi < 10 ? 1 : 0) : '3.1'
 
       const el = document.createElement('button')
       el.type = 'button'
@@ -4550,7 +4550,7 @@ export default function MapView() {
           Hotspot #${rank || 1}${kindLabel ? ` · ${kindLabel}` : ''}
         </div>
         <div style="margin-top:3px;font-size:12px;font-weight:600;color:rgba(255,255,255,0.78)">
-          Est. cases (${rLabel} km): ${estLabel}
+          Est. cases (${rMiLabel} mi): ${estLabel}
         </div>
       `
       el.onclick = () => {
@@ -6142,6 +6142,13 @@ export default function MapView() {
     } else {
       setVis('phoenix-homelessness-synthetic-points', 'visible')
     }
+
+    // Keep point pins above any polygon overlays.
+    try {
+      if (map.current.getLayer('phoenix-homelessness-heatmap-points')) map.current.moveLayer('phoenix-homelessness-heatmap-points')
+      if (map.current.getLayer('phoenix-homelessness-synthetic-points')) map.current.moveLayer('phoenix-homelessness-synthetic-points')
+      if (map.current.getLayer('phoenix-cooling-centers-points')) map.current.moveLayer('phoenix-cooling-centers-points')
+    } catch {}
   }, [selectedCity, phoenixHomelessnessVisible, phoenixHomelessnessCategoryEnabled, callsForServiceStyle, mapLoaded])
 
   // Baltimore neighborhoods - filter and color-code by 311 density
